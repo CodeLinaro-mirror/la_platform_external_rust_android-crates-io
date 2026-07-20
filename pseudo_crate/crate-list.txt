@@ -480,6 +480,8 @@ raw-cpuid
 rayon
 rayon-core
 read-fonts
+ref-cast
+ref-cast-impl
 regex
 regex-automata
 regex-lite
