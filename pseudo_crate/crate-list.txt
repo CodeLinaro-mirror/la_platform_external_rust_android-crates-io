@@ -230,6 +230,7 @@ generic-array
 getopts
 getrandom
 gherkin
+giflib-rs
 gl
 gl_common
 glam
