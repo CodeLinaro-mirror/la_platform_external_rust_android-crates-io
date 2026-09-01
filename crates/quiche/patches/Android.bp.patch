@@ -1,5 +1,5 @@
 diff --git a/Android.bp b/Android.bp
-index 2187809e4..e7f111150 100644
+index fca9550..cc9dc71 100644
 --- a/Android.bp
 +++ b/Android.bp
 @@ -9,7 +9,11 @@ package {
@@ -15,30 +15,28 @@ index 2187809e4..e7f111150 100644
      license_text: ["LICENSE"],
  }
  
-@@ -21,11 +25,7 @@ rust_library {
-     cargo_pkg_version: "0.24.8",
+@@ -22,7 +26,7 @@ rust_library {
      crate_root: "src/lib.rs",
      edition: "2021",
--    features: [
--        "boringssl-vendored",
--        "default",
--    ],
+     features: ["android"],
 -    rustlibs: [
 +    rlibs: [
+         "libbssl_sys",
          "libeither",
          "libintrusive_collections",
-         "liblibc",
-@@ -36,7 +36,8 @@ rust_library {
+@@ -34,6 +38,11 @@ rust_library {
          "libsmallvec",
      ],
      proc_macros: ["libenum_dispatch"],
--    static_libs: [
 +    prefer_rlib: true,
 +    shared_libs: [
-         "libcrypto",
-         "libssl",
-     ],
-@@ -50,7 +51,7 @@ rust_library {
++        "libcrypto",
++        "libssl",
++    ],
+     apex_available: [
+         "//apex_available:platform",
+         "com.android.bettertogether",
+@@ -45,7 +54,7 @@ rust_library {
      min_sdk_version: "29",
  }
  
@@ -47,41 +45,49 @@ index 2187809e4..e7f111150 100644
      name: "libquiche_ffi",
      host_supported: true,
      crate_name: "quiche",
-@@ -58,11 +59,7 @@ rust_ffi_shared {
-     cargo_pkg_version: "0.24.8",
+@@ -54,7 +63,7 @@ rust_ffi_shared {
      crate_root: "src/lib.rs",
      edition: "2021",
--    features: [
--        "boringssl-vendored",
--        "default",
--    ],
+     features: ["android"],
 -    rustlibs: [
 +    rlibs: [
+         "libbssl_sys",
          "libeither",
          "libintrusive_collections",
-         "liblibc",
-@@ -73,7 +70,8 @@ rust_ffi_shared {
+@@ -66,6 +75,11 @@ rust_ffi_shared {
          "libsmallvec",
      ],
      proc_macros: ["libenum_dispatch"],
--    static_libs: [
 +    prefer_rlib: true,
 +    shared_libs: [
-         "libcrypto",
-         "libssl",
++        "libcrypto",
++        "libssl",
++    ],
+     apex_available: [
+         "//apex_available:platform",
+         "com.android.bettertogether",
+@@ -98,6 +112,10 @@ rust_library_rlib {
+         "libsmallvec",
      ],
-@@ -95,10 +93,6 @@ rust_library_rlib {
-     cargo_pkg_version: "0.24.8",
-     crate_root: "src/lib.rs",
-     edition: "2021",
--    features: [
--        "boringssl-vendored",
--        "default",
--    ],
-     rustlibs: [
-         "libeither",
-         "libintrusive_collections",
-@@ -162,6 +156,7 @@ rust_test {
+     proc_macros: ["libenum_dispatch"],
++    static_libs: [
++        "libcrypto_static",
++        "libssl",
++    ],
+     apex_available: [
+         "//apex_available:platform",
+         "com.android.bettertogether",
+@@ -139,12 +157,17 @@ rust_test {
+         "liburl",
+     ],
+     proc_macros: ["libenum_dispatch"],
++    static_libs: [
++        "libcrypto_static",
++        "libssl",
++    ],
+     data: [
+         "examples/cert.crt",
+         "examples/cert.key",
          "examples/cert-big.crt",
          "examples/rootca.crt",
      ],
@@ -89,12 +95,14 @@ index 2187809e4..e7f111150 100644
  }
  
  rust_test_host {
-@@ -195,7 +190,7 @@ rust_test_host {
+@@ -180,6 +203,10 @@ rust_test_host {
          "liburl",
      ],
      proc_macros: ["libenum_dispatch"],
--    static_libs: [
 +    shared_libs: [
-         "libcrypto",
-         "libssl",
-     ],
++        "libcrypto",
++        "libssl",
++    ],
+     data: [
+         "examples/cert.crt",
+         "examples/cert.key",
