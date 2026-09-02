@@ -12,7 +12,8 @@
       "//frameworks/native/libs/cpucycleperuid",
       "//frameworks/native/services/cpustats",
       "//packages/modules/UprobeStats:__subpackages__",
-      "//system/bpf/loader"
+      "//system/bpf/loader",
+      "//system/security/security_telemetry"
     ]
   },
   "product_available": false,
