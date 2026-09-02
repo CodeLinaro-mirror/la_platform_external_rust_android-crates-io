@@ -1,6 +1,6 @@
 [package]
 name = "glam"
-version = "0.33.5"
+version = "0.33.6"
 edition = "2021"
 description = "A simple and fast 3D math library for games and graphics"
 repository = "https://github.com/bitshifter/glam-rs"
@@ -83,6 +83,7 @@ encase = { version = "0.12", optional = true, default-features = false }
 zerocopy = { version = "0.8", optional = true, default-features = false, features = ["simd"] }
 zerocopy-derive = { version = "0.8", optional = true, default-features = false }
 arbitrary = { version = "1.4.2", default-features = false, optional = true }
+float_eq = { version = "1.0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 # rand_xoshiro is required for tests if rand is enabled

@@ -4,10 +4,10 @@ use crate::{coresimd::*, f32::math, BVec4, BVec4A, Vec2, Vec3, Vec3A};
 
 use core::fmt;
 use core::iter::{Product, Sum};
-use core::{f32, ops::*};
+use core::ops::*;
 
+use crate::coresimd;
 use core::simd::{cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdFloat, *};
-use std::simd::StdFloat;
 
 /// Creates a 4-dimensional vector.
 #[inline(always)]
@@ -518,8 +518,7 @@ impl Vec4 {
     #[inline]
     #[must_use]
     pub fn length(self) -> f32 {
-        let dot = dot4_in_x(self.0, self.0);
-        dot.sqrt()[0]
+        math::sqrt(self.dot(self))
     }
 
     /// Returns `true` if the vector is not the zero vector (also rejects NaN).
@@ -544,8 +543,7 @@ impl Vec4 {
     #[inline]
     #[must_use]
     pub fn length_recip(self) -> f32 {
-        let dot = dot4_in_x(self.0, self.0);
-        dot.sqrt().recip()[0]
+        1.0 / self.length()
     }
 
     /// Computes the Euclidean distance between two points in space.
@@ -600,9 +598,8 @@ impl Vec4 {
     #[inline]
     #[must_use]
     pub fn normalize(self) -> Self {
-        let length = dot4_into_f32x4(self.0, self.0).sqrt();
         #[allow(clippy::let_and_return)]
-        let normalized = Self(self.0 / length);
+        let normalized = self.mul(self.length_recip());
         glam_assert!(normalized.is_finite());
         normalized
     }
@@ -746,7 +743,7 @@ impl Vec4 {
     #[inline]
     #[must_use]
     pub fn round(self) -> Self {
-        Self(self.0.round())
+        Self(coresimd::round4(self.0))
     }
 
     /// Returns a vector containing the largest integer less than or equal to a number for each
@@ -754,7 +751,7 @@ impl Vec4 {
     #[inline]
     #[must_use]
     pub fn floor(self) -> Self {
-        Self(self.0.floor())
+        Self(coresimd::floor4(self.0))
     }
 
     /// Returns a vector containing the smallest integer greater than or equal to a number for
@@ -762,7 +759,7 @@ impl Vec4 {
     #[inline]
     #[must_use]
     pub fn ceil(self) -> Self {
-        Self(self.0.ceil())
+        Self(coresimd::ceil4(self.0))
     }
 
     /// Returns a vector containing the integer part each element of `self`. This means numbers are
@@ -770,7 +767,7 @@ impl Vec4 {
     #[inline]
     #[must_use]
     pub fn trunc(self) -> Self {
-        Self(self.0.trunc())
+        Self(coresimd::trunc4(self.0))
     }
 
     /// Returns a vector containing `0.0` if `rhs < self` and 1.0 otherwise.
@@ -780,6 +777,24 @@ impl Vec4 {
     #[must_use]
     pub fn step(self, rhs: Self) -> Self {
         Self::select(rhs.cmplt(self), Self::ZERO, Self::ONE)
+    }
+
+    /// Performs Hermite interpolation between `0.0` and `1.0` using `x` normalized to `[edge0, edge1]`.
+    ///
+    /// This is equivalent to `t * t * (3.0 - 2.0 * t)`, where `t` is clamped to `[0.0, 1.0]`.
+    /// Results are undefined if any element of `edge0` is greater than or equal to the corresponding
+    /// element of `edge1`.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if any element of `edge0` is greater than or equal to the corresponding element
+    /// of `edge1`, when `glam_assert` is enabled.
+    #[inline]
+    #[must_use]
+    pub fn smoothstep(self, edge0: Self, edge1: Self) -> Self {
+        glam_assert!(edge0.cmplt(edge1).all());
+        let t = ((self - edge0) / (edge1 - edge0)).saturate();
+        t * t * (Self::splat(3.0) - Self::splat(2.0) * t)
     }
 
     /// Returns a vector containing all elements of `self` clamped to the range of `[0, 1]`.
@@ -881,12 +896,7 @@ impl Vec4 {
     #[inline]
     #[must_use]
     pub fn sqrt(self) -> Self {
-        Self::new(
-            math::sqrt(self.x),
-            math::sqrt(self.y),
-            math::sqrt(self.z),
-            math::sqrt(self.w),
-        )
+        Self(coresimd::sqrt4(self.0))
     }
 
     /// Returns a vector containing the cosine for each element of `self`.
@@ -1051,7 +1061,7 @@ impl Vec4 {
     #[inline]
     #[must_use]
     pub fn mul_add(self, a: Self, b: Self) -> Self {
-        Self(self.0.mul_add(a.0, b.0))
+        Self(coresimd::mul_add4(self.0, a.0, b.0))
     }
 
     /// Returns the reflection vector for a given incident vector `self` and surface normal

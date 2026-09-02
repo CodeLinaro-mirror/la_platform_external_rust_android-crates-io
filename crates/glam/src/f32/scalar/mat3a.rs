@@ -48,8 +48,11 @@ pub const fn mat3a(x_axis: Vec3A, y_axis: Vec3A, z_axis: Vec3A) -> Mat3A {
 /// vectors respectively. These methods assume that `Self` contains a valid affine
 /// transform.
 #[derive(Clone, Copy)]
-#[cfg_attr(feature = "bytemuck", derive(bytemuck::AnyBitPattern))]
-#[cfg_attr(feature = "zerocopy", derive(FromBytes, Immutable, KnownLayout))]
+#[cfg_attr(feature = "bytemuck", derive(bytemuck::Pod, bytemuck::Zeroable))]
+#[cfg_attr(
+    feature = "zerocopy",
+    derive(FromBytes, Immutable, IntoBytes, KnownLayout)
+)]
 #[repr(C)]
 pub struct Mat3A {
     pub x_axis: Vec3A,
@@ -769,10 +772,11 @@ impl Mat3A {
     #[inline]
     #[must_use]
     pub fn mul_vec3a(&self, rhs: Vec3A) -> Vec3A {
-        let mut res = self.x_axis.mul(rhs.xxx());
-        res = res.add(self.y_axis.mul(rhs.yyy()));
-        res = res.add(self.z_axis.mul(rhs.zzz()));
-        res
+        Vec3A::new(
+            self.x_axis.x * rhs.x + self.y_axis.x * rhs.y + self.z_axis.x * rhs.z,
+            self.x_axis.y * rhs.x + self.y_axis.y * rhs.y + self.z_axis.y * rhs.z,
+            self.x_axis.z * rhs.x + self.y_axis.z * rhs.y + self.z_axis.z * rhs.z,
+        )
     }
 
     /// Transforms a 3D vector by the transpose of `self`.
