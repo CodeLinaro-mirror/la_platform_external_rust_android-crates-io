@@ -230,6 +230,7 @@ generic-array
 getopts
 getrandom
 gherkin
+giflib-rs
 gl
 gl_common
 glam
@@ -507,6 +508,7 @@ rustls-webpki
 rustversion
 ryu
 safe-mmio
+safer_cffi
 same-file
 scopeguard
 sec1
@@ -574,6 +576,7 @@ syn
 syn-mid
 sync_wrapper
 synstructure
+sysexit
 taffy
 tap
 tar
