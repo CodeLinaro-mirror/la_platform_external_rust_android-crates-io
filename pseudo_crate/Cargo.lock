@@ -410,6 +410,7 @@ dependencies = [
  "getopts",
  "getrandom 0.4.3",
  "gherkin",
+ "giflib-rs",
  "gl",
  "glam",
  "glob",
@@ -671,6 +672,7 @@ dependencies = [
  "rustversion",
  "ryu",
  "safe-mmio",
+ "safer_cffi",
  "same-file",
  "scopeguard",
  "sec1",
@@ -737,6 +739,7 @@ dependencies = [
  "syn 2.0.119",
  "sync_wrapper",
  "synstructure",
+ "sysexit",
  "taffy 0.7.7",
  "tap",
  "tar",
@@ -1618,7 +1621,7 @@ checksum = "aa3f0543e1dc90f7b8ffb882c6d78b7005c4bab496ab8a68da25c0103dfbac6b"
 dependencies = [
  "bin-proto-derive",
  "bitstream-io",
- "defmt 1.1.1",
+ "defmt",
  "no_std_io2",
 ]
 
@@ -4299,6 +4302,17 @@ checksum = "ee8cfcc411d9adbbaba82fb72661cc1bcca13e8bba98b364e62b2dba8f960159"
 dependencies = [
  "color_quant",
  "weezl",
+]
+
+[[package]]
+name = "giflib-rs"
+version = "6.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c73934b98d38fa044b0d78642293241100eea6378d7097490d523226abf8618f"
+dependencies = [
+ "bindgen 0.72.1",
+ "libc 0.2.189",
+ "safer_cffi",
 ]
 
 [[package]]
@@ -9000,6 +9014,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "safer_cffi"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ea91e79102f6312d849fe25711039cd02c0d6143c605c29807a7de32ab70e9f"
+dependencies = [
+ "libc 0.2.189",
+ "log",
+]
+
+[[package]]
 name = "same-file"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10030,6 +10054,15 @@ dependencies = [
  "proc-macro2 1.0.107",
  "quote 1.0.47",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "sysexit"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a26991bb0e6ef939ac9a8d6b57979efa59921928a3aa0334d818fe6e458aa6a9"
+dependencies = [
+ "libc 0.2.189",
 ]
 
 [[package]]
