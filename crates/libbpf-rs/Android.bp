@@ -40,6 +40,7 @@ rust_library {
         "//frameworks/native/services/cpustats",
         "//packages/modules/UprobeStats:__subpackages__",
         "//system/bpf/loader",
+        "//system/security/security_telemetry",
     ],
     shared_libs: ["libbpf"],
 }
