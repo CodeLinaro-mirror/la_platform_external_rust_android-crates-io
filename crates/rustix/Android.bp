@@ -33,6 +33,7 @@ rust_library {
         "pipe",
         "process",
         "std",
+        "termios",
         "thread",
         "time",
         "use-libc",
