@@ -18,7 +18,7 @@ rust_library {
     host_supported: true,
     crate_name: "netlink_packet_route",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.31.0",
+    cargo_pkg_version: "0.32.1",
     crate_root: "src/lib.rs",
     edition: "2021",
     rustlibs: [

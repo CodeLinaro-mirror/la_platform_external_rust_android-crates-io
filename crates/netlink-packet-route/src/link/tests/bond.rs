@@ -6,10 +6,11 @@ use crate::{
     link::{
         BondAdSelect, BondAllPortActive, BondArpAllTargets, BondArpValidate,
         BondFailOverMac, BondLacpRate, BondMode, BondPortState,
-        BondPrimaryReselect, BondXmitHashPolicy, InfoBond, InfoBondPort,
-        InfoData, InfoKind, InfoPortData, InfoPortKind, LinkAttribute,
-        LinkFlags, LinkHeader, LinkInfo, LinkLayerType, LinkMessage,
-        LinkMessageBuffer, LinkMode, Map, MiiStatus, State,
+        BondPrimaryReselect, BondXmitHashPolicy, ChurnState, InfoBond,
+        InfoBondPort, InfoData, InfoKind, InfoPortData, InfoPortKind,
+        LacpState, LinkAttribute, LinkFlags, LinkHeader, LinkInfo,
+        LinkLayerType, LinkMessage, LinkMessageBuffer, LinkMode, Map,
+        MiiStatus, State,
     },
     AddressFamily, RouteNetlinkMessage,
 };
@@ -158,6 +159,118 @@ fn test_bond_port_link_info() {
 }
 
 #[test]
+fn test_parsing_link_bond_port_ad() {
+    // Kernel RTM_NEWLINK message of an 802.3ad bond port, captured via
+    // nlmon when the port became active. Captured from kernel
+    // 7.1.5-arch1-2
+    // ```sh
+    // sudo modprobe nlmon bonding dummy
+    // sudo ip link add nl0 type nlmon
+    // sudo ip link set nl0 up
+    // sudo tcpdump -i nl0 -w bond_port.pcap &
+    // sudo ip link add bond0 type bond mode 802.3ad
+    // sudo ip link add bond-d0 type dummy
+    // sudo ip link set bond-d0 master bond0
+    // sudo ip link set bond0 up
+    // sudo pkill tcpdump
+    // ```
+    let raw: Vec<u8> = vec![
+        0x00, 0x00, // family AF_UNSPEC
+        0x01, 0x00, // link layer type ARPHRD_ETHER
+        0x1a, 0x00, 0x00, 0x00, // interface index 26
+        0xc3, 0x08, 0x01, 0x00, // flags
+        0x00, 0x00, 0x00, 0x00, // change mask 0
+        0x84, 0x00, // length 132
+        0x12, 0x00, // IFLA_LINKINFO 18
+        0x0a, 0x00, // length 10
+        0x01, 0x00, // IFLA_INFO_KIND 1
+        0x64, 0x75, 0x6d, 0x6d, 0x79, 0x00, // 'dummy\0'
+        0x00, 0x00, // padding
+        0x09, 0x00, // length 9
+        0x04, 0x00, // IFLA_INFO_PORT_KIND 4
+        0x62, 0x6f, 0x6e, 0x64, 0x00, // 'bond\0'
+        0x00, 0x00, 0x00, // padding
+        0x68, 0x00, // length 104
+        0x05, 0x00, // IFLA_INFO_PORT_DATA 5
+        // IFLA_BOND_PORT_STATE active(0)
+        0x05, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // IFLA_BOND_PORT_MII_STATUS up(0)
+        0x05, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // IFLA_BOND_PORT_LINK_FAILURE_COUNT 0
+        0x08, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // IFLA_BOND_PORT_PERM_HWADDR
+        0x0a, 0x00, 0x04, 0x00, 0xf6, 0xbe, 0x32, 0x7c, 0x99, 0x6b, 0x00, 0x00,
+        // IFLA_BOND_PORT_QUEUE_ID 0
+        0x06, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // IFLA_BOND_PORT_PRIO 0
+        0x08, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // IFLA_BOND_PORT_AD_AGGREGATOR_ID 1
+        0x06, 0x00, 0x06, 0x00, 0x01, 0x00, 0x00, 0x00,
+        // IFLA_BOND_PORT_AD_ACTOR_OPER_PORT_STATE 0x45
+        // (active, aggregating, defaulted)
+        0x05, 0x00, 0x07, 0x00, 0x45, 0x00, 0x00, 0x00,
+        // IFLA_BOND_PORT_AD_PARTNER_OPER_PORT_STATE 0
+        0x06, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // IFLA_BOND_PORT_AD_CHURN_ACTOR_STATE monitor(0)
+        0x05, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // IFLA_BOND_PORT_AD_CHURN_PARTNER_STATE monitor(0)
+        0x05, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // IFLA_BOND_PORT_ACTOR_PORT_PRIO 255
+        0x06, 0x00, 0x0a, 0x00, 0xff, 0x00, 0x00, 0x00,
+    ];
+
+    let expected = LinkMessage {
+        header: LinkHeader {
+            interface_family: AddressFamily::Unspec,
+            index: 26,
+            link_layer_type: LinkLayerType::Ether,
+            flags: LinkFlags::Broadcast
+                | LinkFlags::LowerUp
+                | LinkFlags::Noarp
+                | LinkFlags::Port
+                | LinkFlags::Running
+                | LinkFlags::Up,
+            change_mask: LinkFlags::empty(),
+        },
+        attributes: vec![LinkAttribute::LinkInfo(vec![
+            LinkInfo::Kind(InfoKind::Dummy),
+            LinkInfo::PortKind(InfoPortKind::Bond),
+            LinkInfo::PortData(InfoPortData::BondPort(vec![
+                InfoBondPort::BondPortState(BondPortState::Active),
+                InfoBondPort::MiiStatus(MiiStatus::Up),
+                InfoBondPort::LinkFailureCount(0),
+                InfoBondPort::PermHwaddr(vec![
+                    0xf6, 0xbe, 0x32, 0x7c, 0x99, 0x6b,
+                ]),
+                InfoBondPort::QueueId(0),
+                InfoBondPort::Prio(0),
+                InfoBondPort::AdAggregatorId(1),
+                InfoBondPort::AdActorOperPortState(
+                    LacpState::LACP_ACTIVITY
+                        | LacpState::AGGREGATION
+                        | LacpState::DEFAULTED,
+                ),
+                InfoBondPort::AdPartnerOperPortState(LacpState::empty()),
+                InfoBondPort::AdChurnActorState(ChurnState::Monitor),
+                InfoBondPort::AdChurnPartnerState(ChurnState::Monitor),
+                InfoBondPort::ActorPortPrio(255),
+            ])),
+        ])],
+    };
+
+    assert_eq!(
+        expected,
+        LinkMessage::parse(&LinkMessageBuffer::new(&raw)).unwrap()
+    );
+
+    let mut buf = vec![0; expected.buffer_len()];
+
+    expected.emit(&mut buf);
+
+    assert_eq!(buf, raw);
+}
+
+#[test]
 fn test_bond_arp_validate() {
     let raw: Vec<u8> = vec![
         0x00, 0x00, 0x01, 0x00, 0x05, 0x00, 0x00, 0x00, 0x02, 0x14, 0x00, 0x00,
@@ -241,6 +354,13 @@ fn test_bond_mode_from_str() {
     assert_eq!(BondMode::Ieee8023Ad, "802.3ad".parse().unwrap());
     assert_eq!(BondMode::BalanceTlb, "balance-tlb".parse().unwrap());
     assert_eq!(BondMode::BalanceAlb, "balance-alb".parse().unwrap());
+    assert_eq!(BondMode::BalanceRr, "0".parse().unwrap());
+    assert_eq!(BondMode::ActiveBackup, "1".parse().unwrap());
+    assert_eq!(BondMode::BalanceXor, "2".parse().unwrap());
+    assert_eq!(BondMode::Broadcast, "3".parse().unwrap());
+    assert_eq!(BondMode::Ieee8023Ad, "4".parse().unwrap());
+    assert_eq!(BondMode::BalanceTlb, "5".parse().unwrap());
+    assert_eq!(BondMode::BalanceAlb, "6".parse().unwrap());
     assert!(BondMode::from_str("bogus").is_err());
 }
 
@@ -260,6 +380,13 @@ fn test_bond_arp_validate_from_str() {
         BondArpValidate::FilterBackup,
         "filter_backup".parse().unwrap()
     );
+    assert_eq!(BondArpValidate::None, "0".parse().unwrap());
+    assert_eq!(BondArpValidate::Active, "1".parse().unwrap());
+    assert_eq!(BondArpValidate::Backup, "2".parse().unwrap());
+    assert_eq!(BondArpValidate::All, "3".parse().unwrap());
+    assert_eq!(BondArpValidate::Filter, "4".parse().unwrap());
+    assert_eq!(BondArpValidate::FilterActive, "5".parse().unwrap());
+    assert_eq!(BondArpValidate::FilterBackup, "6".parse().unwrap());
     assert!(BondArpValidate::from_str("bogus").is_err());
 }
 
@@ -269,6 +396,9 @@ fn test_bond_primary_reselect_from_str() {
     assert_eq!(BondPrimaryReselect::Always, "always".parse().unwrap());
     assert_eq!(BondPrimaryReselect::Better, "better".parse().unwrap());
     assert_eq!(BondPrimaryReselect::Failure, "failure".parse().unwrap());
+    assert_eq!(BondPrimaryReselect::Always, "0".parse().unwrap());
+    assert_eq!(BondPrimaryReselect::Better, "1".parse().unwrap());
+    assert_eq!(BondPrimaryReselect::Failure, "2".parse().unwrap());
     assert!(BondPrimaryReselect::from_str("bogus").is_err());
 }
 
@@ -284,6 +414,12 @@ fn test_bond_xmit_hash_policy_from_str() {
         BondXmitHashPolicy::VlanSrcMac,
         "vlan+srcmac".parse().unwrap()
     );
+    assert_eq!(BondXmitHashPolicy::Layer2, "0".parse().unwrap());
+    assert_eq!(BondXmitHashPolicy::Layer34, "1".parse().unwrap());
+    assert_eq!(BondXmitHashPolicy::Layer23, "2".parse().unwrap());
+    assert_eq!(BondXmitHashPolicy::Encap23, "3".parse().unwrap());
+    assert_eq!(BondXmitHashPolicy::Encap34, "4".parse().unwrap());
+    assert_eq!(BondXmitHashPolicy::VlanSrcMac, "5".parse().unwrap());
     assert!(BondXmitHashPolicy::from_str("bogus").is_err());
 }
 
@@ -292,6 +428,8 @@ fn test_bond_arp_all_targets_from_str() {
     use std::str::FromStr;
     assert_eq!(BondArpAllTargets::Any, "any".parse().unwrap());
     assert_eq!(BondArpAllTargets::All, "all".parse().unwrap());
+    assert_eq!(BondArpAllTargets::Any, "0".parse().unwrap());
+    assert_eq!(BondArpAllTargets::All, "1".parse().unwrap());
     assert!(BondArpAllTargets::from_str("bogus").is_err());
 }
 
@@ -301,6 +439,9 @@ fn test_bond_fail_over_mac_from_str() {
     assert_eq!(BondFailOverMac::None, "none".parse().unwrap());
     assert_eq!(BondFailOverMac::Active, "active".parse().unwrap());
     assert_eq!(BondFailOverMac::Follow, "follow".parse().unwrap());
+    assert_eq!(BondFailOverMac::None, "0".parse().unwrap());
+    assert_eq!(BondFailOverMac::Active, "1".parse().unwrap());
+    assert_eq!(BondFailOverMac::Follow, "2".parse().unwrap());
     assert!(BondFailOverMac::from_str("bogus").is_err());
 }
 
@@ -314,6 +455,10 @@ fn test_bond_ad_select_from_str() {
         BondAdSelect::ActorPortPrio,
         "actor_port_prio".parse().unwrap()
     );
+    assert_eq!(BondAdSelect::Stable, "0".parse().unwrap());
+    assert_eq!(BondAdSelect::Bandwidth, "1".parse().unwrap());
+    assert_eq!(BondAdSelect::Count, "2".parse().unwrap());
+    assert_eq!(BondAdSelect::ActorPortPrio, "3".parse().unwrap());
     assert!(BondAdSelect::from_str("bogus").is_err());
 }
 
@@ -322,6 +467,8 @@ fn test_bond_lacp_rate_from_str() {
     use std::str::FromStr;
     assert_eq!(BondLacpRate::Slow, "slow".parse().unwrap());
     assert_eq!(BondLacpRate::Fast, "fast".parse().unwrap());
+    assert_eq!(BondLacpRate::Slow, "0".parse().unwrap());
+    assert_eq!(BondLacpRate::Fast, "1".parse().unwrap());
     assert!(BondLacpRate::from_str("bogus").is_err());
 }
 
