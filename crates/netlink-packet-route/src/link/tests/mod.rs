@@ -1,58 +1,43 @@
 // SPDX-License-Identifier: MIT
 
-#[cfg(test)]
 mod afspec;
-#[cfg(test)]
+mod amt;
+mod bareudp;
+mod batadv;
 mod bond;
-#[cfg(test)]
 mod bridge;
-#[cfg(test)]
+mod can;
 mod dpll_pin;
-#[cfg(test)]
 mod geneve;
-#[cfg(test)]
 mod gre;
-#[cfg(test)]
+mod gtp;
 mod hsr;
-#[cfg(test)]
+mod inet;
 mod ipoib;
-#[cfg(test)]
 mod iptunnel;
-#[cfg(test)]
 mod ipvlan;
-#[cfg(test)]
 mod ipvtap;
-#[cfg(test)]
 mod loopback;
-#[cfg(test)]
 mod macsec;
-#[cfg(test)]
 mod macvlan;
-#[cfg(test)]
 mod macvtap;
-#[cfg(test)]
 mod message;
-#[cfg(test)]
+mod netdevsim;
 mod netkit;
-#[cfg(test)]
+mod pfcp;
 mod prop_list;
-#[cfg(test)]
+mod rmnet;
 mod sriov;
-#[cfg(test)]
 mod statistics;
-#[cfg(test)]
+mod vcan;
 mod veth;
-#[cfg(test)]
 mod vlan;
-#[cfg(test)]
 mod vrf;
-#[cfg(test)]
+mod vti;
 mod vxcan;
-#[cfg(test)]
 mod vxlan;
-#[cfg(test)]
+mod wireguard;
 mod wireless;
-#[cfg(test)]
+mod wwan;
 mod xdp;
-#[cfg(test)]
 mod xfrm;
