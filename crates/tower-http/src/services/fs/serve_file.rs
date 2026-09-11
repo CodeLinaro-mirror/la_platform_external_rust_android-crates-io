@@ -105,6 +105,13 @@ impl ServeFile {
         Self(self.0.with_buf_chunk_size(chunk_size))
     }
 
+    /// Configure whether syntactically valid multi-range requests should be ignored.
+    ///
+    /// See [`ServeDir::ignore_multi_range_requests`] for details.
+    pub fn ignore_multi_range_requests(self, ignore: bool) -> Self {
+        Self(self.0.ignore_multi_range_requests(ignore))
+    }
+
     /// Call the service and get a future that contains any `std::io::Error` that might have
     /// happened.
     ///
@@ -143,7 +150,6 @@ where
 mod tests {
     use crate::services::ServeFile;
     use crate::test_helpers::Body;
-    use async_compression::tokio::bufread::ZstdDecoder;
     use brotli::BrotliDecompress;
     use flate2::bufread::DeflateDecoder;
     use flate2::bufread::GzDecoder;
@@ -154,7 +160,6 @@ mod tests {
     use mime::Mime;
     use std::io::Read;
     use std::str::FromStr;
-    use tokio::io::AsyncReadExt;
     use tower::ServiceExt;
 
     /// Expected prefix of the decompressed content in precompressed test files.
@@ -191,6 +196,22 @@ mod tests {
         let body = String::from_utf8(body.to_vec()).unwrap();
 
         assert!(body.starts_with("# Tower HTTP"));
+    }
+
+    #[tokio::test]
+    async fn multipart_range_can_be_ignored() {
+        let svc = ServeFile::new(README_PATH).ignore_multi_range_requests(true);
+        let request = Request::builder()
+            .header(header::RANGE, "bytes=0-0,2-2")
+            .body(Body::empty())
+            .unwrap();
+        let res = svc.oneshot(request).await.unwrap();
+
+        assert_eq!(res.status(), StatusCode::OK);
+        assert!(res.headers().get(header::CONTENT_RANGE).is_none());
+
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(body.as_ref(), std::fs::read(README_PATH).unwrap());
     }
 
     #[tokio::test]
@@ -386,9 +407,8 @@ mod tests {
         assert_eq!(res.headers()["content-encoding"], "zstd");
 
         let body = res.into_body().collect().await.unwrap().to_bytes();
-        let mut decoder = ZstdDecoder::new(&body[..]);
-        let mut decompressed = String::new();
-        decoder.read_to_string(&mut decompressed).await.unwrap();
+        let decompressed = zstd::stream::decode_all(&body[..]).unwrap();
+        let decompressed = String::from_utf8(decompressed).unwrap();
         assert!(decompressed.starts_with(EXPECTED_CONTENT_PREFIX));
     }
 

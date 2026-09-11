@@ -1,5 +1,5 @@
 use super::{
-    open_file::{FileOpened, FileRequestExtent, OpenFileOutput},
+    open_file::{FileOpened, FileRequestExtent, OpenFileOutput, RangeError},
     DefaultServeDirFallback, ResponseBody,
 };
 use crate::{
@@ -144,24 +144,11 @@ where
                     }
 
                     Err(err) => {
-                        #[cfg(unix)]
-                        // 20 = libc::ENOTDIR => "not a directory
-                        // when `io_error_more` landed, this can be changed
-                        // to checking for `io::ErrorKind::NotADirectory`.
-                        // https://github.com/rust-lang/rust/issues/86442
-                        let error_is_not_a_directory = err.raw_os_error() == Some(20);
-                        #[cfg(not(unix))]
-                        let error_is_not_a_directory = false;
-
-                        if matches!(
-                            err.kind(),
-                            io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
-                        ) || error_is_not_a_directory
-                        {
+                        if super::should_return_not_found(&err) {
                             if let Some((mut fallback, request)) = fallback_and_request.take() {
                                 call_fallback(&mut fallback, request)
                             } else {
-                                break Poll::Ready(Ok(not_found()));
+                                break Poll::Ready(Err(err));
                             }
                         } else {
                             break Poll::Ready(Err(err));
@@ -269,63 +256,57 @@ fn build_response(output: FileOpened) -> Response<ResponseBody> {
     }
 
     match output.maybe_range {
-        Some(Ok(ranges)) => {
-            if let Some(range) = ranges.first() {
-                if ranges.len() > 1 {
-                    builder
-                        .header(header::CONTENT_RANGE, format!("bytes */{}", size))
-                        .status(StatusCode::RANGE_NOT_SATISFIABLE)
-                        .body(body_from_bytes(Bytes::from(
-                            "Cannot serve multipart range requests",
-                        )))
-                        .unwrap()
-                } else {
-                    let body = if let Some(file) = maybe_file {
-                        let range_size = range.end() - range.start() + 1;
-                        ResponseBody::new(UnsyncBoxBody::from_inner(
-                            AsyncReadBody::with_capacity_limited(
-                                file,
-                                output.chunk_size,
-                                range_size,
-                            )
-                            .boxed_unsync(),
-                        ))
-                    } else {
-                        empty_body()
-                    };
-
-                    let content_length = if size == 0 {
-                        0
-                    } else {
-                        range.end() - range.start() + 1
-                    };
-
-                    builder
-                        .header(
-                            header::CONTENT_RANGE,
-                            format!("bytes {}-{}/{}", range.start(), range.end(), size),
-                        )
-                        .header(header::CONTENT_LENGTH, content_length)
-                        .status(StatusCode::PARTIAL_CONTENT)
-                        .body(body)
-                        .unwrap()
-                }
+        Some(Ok(range)) => {
+            let body = if let Some(file) = maybe_file {
+                let range_size = range.end() - range.start() + 1;
+                ResponseBody::new(UnsyncBoxBody::from_inner(
+                    AsyncReadBody::with_capacity_limited(file, output.chunk_size, range_size)
+                        .boxed_unsync(),
+                ))
             } else {
-                builder
-                    .header(header::CONTENT_RANGE, format!("bytes */{}", size))
-                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
-                    .body(body_from_bytes(Bytes::from(
-                        "No range found after parsing range header, please file an issue",
-                    )))
-                    .unwrap()
-            }
+                empty_body()
+            };
+
+            let content_length = if size == 0 {
+                0
+            } else {
+                range.end() - range.start() + 1
+            };
+
+            builder
+                .header(
+                    header::CONTENT_RANGE,
+                    format!("bytes {}-{}/{}", range.start(), range.end(), size),
+                )
+                .header(header::CONTENT_LENGTH, content_length)
+                .status(StatusCode::PARTIAL_CONTENT)
+                .body(body)
+                .unwrap()
         }
 
-        Some(Err(_)) => builder
-            .header(header::CONTENT_RANGE, format!("bytes */{}", size))
-            .status(StatusCode::RANGE_NOT_SATISFIABLE)
-            .body(empty_body())
-            .unwrap(),
+        Some(Err(RangeError::MultipleRangesNotSupported)) => {
+            let mut response = builder
+                .header(header::CONTENT_RANGE, format!("bytes */{}", size))
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .body(body_from_bytes(Bytes::from(
+                    "Cannot serve multipart range requests",
+                )))
+                .unwrap();
+            response.headers_mut().remove(header::CONTENT_TYPE);
+            response.headers_mut().remove(header::CONTENT_ENCODING);
+            response
+        }
+
+        Some(Err(RangeError::Unsatisfiable)) => {
+            let mut response = builder
+                .header(header::CONTENT_RANGE, format!("bytes */{}", size))
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .body(empty_body())
+                .unwrap();
+            response.headers_mut().remove(header::CONTENT_TYPE);
+            response.headers_mut().remove(header::CONTENT_ENCODING);
+            response
+        }
 
         // Not a range request
         None => {
