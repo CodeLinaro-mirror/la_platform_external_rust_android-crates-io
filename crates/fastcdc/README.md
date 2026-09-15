@@ -14,6 +14,13 @@ $ cargo build
 $ cargo test
 ```
 
+### Testing async support
+
+```shell
+cargo test --features tokio
+cargo test --features futures
+```
+
 ## Example Usage
 
 Examples can be found in the `examples` directory of the source repository, which demonstrate finding chunk boundaries in a given file. There are both streaming and non-streaming examples, where the non-streaming examples use the `memmap2` crate to read large files efficiently.
@@ -47,7 +54,7 @@ Both the `v2016` and `v2020` modules have a streaming version of FastCDC named `
 
 ```rust
 let source = std::fs::File::open("test/fixtures/SekienAkashita.jpg").unwrap();
-let chunker = fastcdc::v2020::StreamCDC::new(source, 4096, 16384, 65535);
+let chunker = fastcdc::v2020::StreamCDC::new(source, 4096, 16384, 65534);
 for result in chunker {
     let chunk = result.unwrap();
     println!("offset={} length={}", chunk.offset, chunk.length);
@@ -60,7 +67,7 @@ The `v2020` module has an async streaming version of FastCDC named `AsyncStreamC
 
 ```rust
 let source = std::fs::File::open("test/fixtures/SekienAkashita.jpg").unwrap();
-let chunker = fastcdc::v2020::AsyncStreamCDC::new(&source, 4096, 16384, 65535);
+let chunker = fastcdc::v2020::AsyncStreamCDC::new(&source, 4096, 16384, 65534);
 let stream = chunker.as_stream();
 let chunks = stream.collect::<Vec<_>>().await;
 
@@ -88,21 +95,41 @@ let chunker = fastcdc::ronomon::FastCDC::new(&contents, 8192, 16384, 32768);
 
 The cut points produced will be identical to previous releases as the `ronomon` implementation was never changed in that manner. Note, however, that the other implementations _will_ produce different results.
 
+## Benchmarking
+
+A [criterion](https://docs.rs/criterion) benchmark suite lives in `benches/chunking.rs`. It chunks deterministically-generated inputs (random, text, zeros, mixed) across the chunker variants, code paths, and average chunk sizes. All data is produced from fixed seeds, so there are no fixtures to manage.
+
+```shell
+cargo bench
+cargo bench -- v2020   # filter by group/benchmark name
+```
+
+These benchmarks are intended for **local, before-and-after comparison** of a change, not for continuous integration — shared CI runners are too noisy for reliable microbenchmark measurements. The recommended workflow uses criterion's built-in baselines: capture the base branch, then compare the change against it.
+
+```shell
+git checkout master
+cargo bench -- --save-baseline before
+git checkout <pr-branch>
+cargo bench -- --baseline before
+```
+
+The second run prints the percent change and a significance verdict for each benchmark. For trustworthy numbers, run on an otherwise idle machine and treat deltas smaller than roughly 10% as noise.
+
 ## Reference Material
 
 The original algorithm from 2016 is described in [FastCDC: a Fast and Efficient Content-Defined Chunking Approach for Data Deduplication](https://www.usenix.org/system/files/conference/atc16/atc16-paper-xia.pdf), while the improved "rolling two bytes each time" version from 2020 is detailed in [The Design of Fast Content-Defined Chunking for Data Deduplication Based Storage Systems](https://ieeexplore.ieee.org/document/9055082).
 
 ## Other Implementations
 
-* [jrobhoward/quickcdc](https://github.com/jrobhoward/quickcdc)
-    + Similar but slightly earlier algorithm by some of the same authors?
+* [wxiacode/FastCDC-c](https://github.com/wxiacode/FastCDC-c)
+    + Canonical algorithm in C with gear table generation and mask values.
+* [HIT-HSSL/destor](https://github.com/HIT-HSSL/destor)
+    + An earlier implementation in C, maybe based on the 2016 paper.
+* [wxiacode/restic-FastCDC](https://github.com/wxiacode/restic-FastCDC)
+    + Alternative implementation in Go with additional mask values.
 * [rdedup_cdc at docs.rs](https://docs.rs/crate/rdedup-cdc/0.1.0/source/src/fastcdc.rs)
     + Alternative implementation in Rust.
 * [ronomon/deduplication](https://github.com/ronomon/deduplication)
     + C++ and JavaScript implementation of a variation of FastCDC.
 * [titusz/fastcdc-py](https://github.com/titusz/fastcdc-py)
-    + Pure Python port of FastCDC. Compatible with this implementation.
-* [wxiacode/FastCDC-c](https://github.com/wxiacode/FastCDC-c)
-    + Canonical algorithm in C with gear table generation and mask values.
-* [wxiacode/restic-FastCDC](https://github.com/wxiacode/restic-FastCDC)
-    + Alternative implementation in Go with additional mask values.
+    + Pure Python port of FastCDC.

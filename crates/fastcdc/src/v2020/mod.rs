@@ -2,7 +2,7 @@
 // Copyright (c) 2025 Nathan Fiedler
 //
 
-//! This module implements the canonical FastCDC algorithm as described in the
+//! This module implements the FastCDC algorithm as described in the
 //! [paper](https://ieeexplore.ieee.org/document/9055082) by Wen Xia, et al., in
 //! 2020.
 //!
@@ -64,14 +64,22 @@ pub const MAXIMUM_MIN: usize = 1024;
 /// Largest acceptable value for the maximum chunk size.
 pub const MAXIMUM_MAX: usize = 16_777_216;
 
-//
-// Masks for each of the desired number of bits, where 0 through 5 are unused.
-// The values for sizes 64 bytes through 128 kilo-bytes comes from the C
-// reference implementation (found in the destor repository) while the extra
-// values come from the restic-FastCDC repository. The FastCDC paper claims that
-// the deduplication ratio is slightly improved when the mask bits are spread
-// relatively evenly, hence these seemingly "magic" values.
-//
+///
+/// Cut-point test masks, one per target chunk-size bucket (indexed by
+/// `avg_size.log2().round()`, see `select_masks`/`logarithm2`).
+///
+/// A candidate byte position is a valid cut point when `hash & mask == 0`;
+/// a mask's bit count sets the probability of that (~`2^-popcount(mask)`),
+/// which sets the expected distance to the next cut. Normalized chunking
+/// picks a stricter mask (`mask_s`, more bits) below `avg_size` and a
+/// looser one (`mask_l`, fewer bits) above it, biasing cut points toward
+/// the average. Values for 64 bytes through 128 KB come from the C
+/// reference implementation (destor repository); the rest come from
+/// restic-FastCDC. The FastCDC paper notes deduplication improves slightly
+/// when mask bits are spread evenly, hence these "magic" values.
+///
+/// Note that indices 0 through 5 are unused.
+///
 pub const MASKS: [u64; 26] = [
     0,                  // padding
     0,                  // padding
@@ -253,9 +261,9 @@ const GEAR_LS: [u64; 256] = [
 ///
 /// Produce the GEAR table, and the left-shifted version, as heap-owned values.
 ///
-/// This will copy the original GEAR table, and its left-shifted twin, and
-/// peform a bitwise exclusive OR on the values using the given seed. If the
-/// seed is zero, no copying or computation is performed.
+/// This will copy the default GEAR table, and its left-shifted twin, and peform
+/// a bitwise exclusive OR on the values using the given seed. If the seed is
+/// zero, no copying or computation is performed.
 ///
 pub fn get_gear_with_seed(seed: u64) -> (Cow<'static, [u64]>, Cow<'static, [u64]>) {
     if seed == 0 {
@@ -277,7 +285,7 @@ pub fn get_gear_with_seed(seed: u64) -> (Cow<'static, [u64]>, Cow<'static, [u64]
 }
 
 ///
-/// Find the next chunk cut point in the source using the original GEAR tables.
+/// Find the next chunk cut point in the source using the default GEAR tables.
 ///
 /// See the `v2020_cut` example for a lengthy example of using this function.
 ///
@@ -300,6 +308,12 @@ pub fn cut(
 ///
 /// Find the next chunk cut point in the source using the given GEAR tables.
 ///
+/// The GEAR tables are, by construction of the gear hash, always 256 entries
+/// long. This function requires exactly 256 entries and will panic otherwise;
+/// converting to a fixed-size array reference is what lets the compiler prove
+/// the per-byte table lookups are in-bounds (no `panic_bounds_check` in the
+/// hot scan loop).
+///
 #[allow(clippy::too_many_arguments)]
 pub fn cut_gear(
     source: &[u8],
@@ -313,6 +327,55 @@ pub fn cut_gear(
     gear: &[u64],
     gear_ls: &[u64],
 ) -> (u64, usize) {
+    let gear: &[u64; 256] = gear.try_into().expect("GEAR table must have 256 entries");
+    let gear_ls: &[u64; 256] = gear_ls
+        .try_into()
+        .expect("GEAR_LS table must have 256 entries");
+    cut_gear_arr(
+        source, min_size, avg_size, max_size, mask_s, mask_l, mask_s_ls, mask_l_ls, gear, gear_ls,
+    )
+}
+
+///
+/// Inner cut routine over fixed-size GEAR arrays.
+///
+/// Identical math and cut points to the original `cut_gear`. The change is
+/// bounds-check-only (no behavior change):
+///   - GEAR tables are `&[u64; 256]`, indexed by a `u8`-derived value, so the
+///     two table lookups per iteration carry no bounds check. This removes 4 of
+///     the 8 `panic_bounds_check` sites the original had (verified in asm).
+///
+/// The source is also narrowed once to `&source[..remaining]` with hoisted
+/// loop bounds. This does NOT eliminate the `src[a]`/`src[a + 1]` bounds checks
+/// — the compiler will not prove `2 * index + 1 < remaining` through the loop —
+/// so 4 source-index checks remain. That is fine: `llvm-mca` shows the loop is
+/// bound by the hash dependency chain (`shl` -> `add` -> `add`), so those
+/// checks land in spare execution slots and cost ~0 cycles. The narrowing is
+/// kept for clarity and because it is harmless. See PERF_NOTES.md.
+///
+#[allow(clippy::too_many_arguments)]
+#[inline]
+fn cut_gear_arr(
+    source: &[u8],
+    min_size: usize,
+    avg_size: usize,
+    max_size: usize,
+    mask_s: u64,
+    mask_l: u64,
+    mask_s_ls: u64,
+    mask_l_ls: u64,
+    gear: &[u64; 256],
+    gear_ls: &[u64; 256],
+) -> (u64, usize) {
+    // The two-byte scan below tests candidates in pairs starting at
+    // `min_size`/`center`/`max_size`; an odd value truncates when halved and
+    // silently shifts those boundaries by one byte (see issue #52). Only
+    // `remaining`, the leftover length of the source itself, is exempt: a
+    // file's size is not under the caller's control, so an odd final window
+    // is handled below rather than rejected.
+    debug_assert!(min_size.is_multiple_of(2), "min_size must be even");
+    debug_assert!(avg_size.is_multiple_of(2), "avg_size must be even");
+    debug_assert!(max_size.is_multiple_of(2), "max_size must be even");
     let mut remaining = source.len();
     if remaining <= min_size {
         return (0, remaining);
@@ -323,34 +386,49 @@ pub fn cut_gear(
     } else if remaining < center {
         center = remaining;
     }
+    // Narrow once to the live window. Note: this does NOT remove the per-byte
+    // source bounds check (the compiler won't prove `2*index+1 < remaining`
+    // here); 4 such checks remain. They are free in practice — the loop is
+    // latency-bound on the hash chain, not throughput-bound. The real win is
+    // the `&[u64; 256]` GEAR tables above, which drop the table-lookup checks.
+    let src = &source[..remaining];
+    let limit1 = center / 2;
+    let limit2 = remaining / 2;
     let mut index = min_size / 2;
     let mut hash: u64 = 0;
-    while index < center / 2 {
+    while index < limit1 {
         let a = index * 2;
-        hash = (hash << 2).wrapping_add(gear_ls[source[a] as usize]);
+        hash = (hash << 2).wrapping_add(gear_ls[src[a] as usize]);
         if (hash & mask_s_ls) == 0 {
             return (hash, a);
         }
-        hash = hash.wrapping_add(gear[source[a + 1] as usize]);
+        hash = hash.wrapping_add(gear[src[a + 1] as usize]);
         if (hash & mask_s) == 0 {
             return (hash, a + 1);
         }
         index += 1;
     }
-    while index < remaining / 2 {
+    while index < limit2 {
         let a = index * 2;
-        hash = (hash << 2).wrapping_add(gear_ls[source[a] as usize]);
+        hash = (hash << 2).wrapping_add(gear_ls[src[a] as usize]);
         if (hash & mask_l_ls) == 0 {
             return (hash, a);
         }
-        hash = hash.wrapping_add(gear[source[a + 1] as usize]);
+        hash = hash.wrapping_add(gear[src[a + 1] as usize]);
         if (hash & mask_l) == 0 {
             return (hash, a + 1);
         }
         index += 1;
     }
     // If all else fails, return the largest chunk. This will happen with
-    // pathological data, such as all zeroes.
+    // pathological data, such as all zeroes. When `remaining` is odd, its
+    // last byte was never part of a tested pair; fold it into the hash (the
+    // same accumulation a scalar byte-at-a-time scan would do) so the
+    // returned fingerprint reflects the whole chunk, without testing it as
+    // its own boundary candidate.
+    if remaining % 2 == 1 {
+        hash = (hash << 1).wrapping_add(gear[src[remaining - 1] as usize]);
+    }
     (hash, remaining)
 }
 
@@ -359,6 +437,23 @@ pub fn cut_gear(
 // rather than always rounding down (which `usize::ilog2` does).
 fn logarithm2(value: usize) -> u32 {
     (value as f64).log2().round() as u32
+}
+
+///
+/// Select the strict (`mask_s`) and relaxed (`mask_l`) masks from [`MASKS`]
+/// for the given average chunk size and normalization level.
+///
+/// [`FastCDC`], [`StreamCDC`], and `AsyncStreamCDC` all call this so that
+/// they pick identical masks for identical arguments; callers implementing
+/// their own scan loop against [`cut`]/[`cut_gear`] (see the `v2020_cut`
+/// example) should call it too rather than reimplementing the bucket lookup.
+///
+pub fn select_masks(avg_size: usize, level: Normalization) -> (u64, u64) {
+    let bits = logarithm2(avg_size);
+    let normalization = level.bits();
+    let mask_s = MASKS[(bits + normalization) as usize];
+    let mask_l = MASKS[(bits - normalization) as usize];
+    (mask_s, mask_l)
 }
 
 ///
@@ -437,7 +532,7 @@ pub struct Chunk {
 /// use std::fs;
 /// use fastcdc::v2020;
 /// let contents = fs::read("test/fixtures/SekienAkashita.jpg").unwrap();
-/// let chunker = v2020::FastCDC::new(&contents, 8192, 16384, 65535);
+/// let chunker = v2020::FastCDC::new(&contents, 8192, 16384, 65534);
 /// for entry in chunker {
 ///     println!("offset={} size={}", entry.offset, entry.length);
 /// }
@@ -500,10 +595,10 @@ impl<'a> FastCDC<'a> {
         debug_assert!(avg_size <= AVERAGE_MAX);
         debug_assert!(max_size >= MAXIMUM_MIN);
         debug_assert!(max_size <= MAXIMUM_MAX);
-        let bits = logarithm2(avg_size);
-        let normalization = level.bits();
-        let mask_s = MASKS[(bits + normalization) as usize];
-        let mask_l = MASKS[(bits - normalization) as usize];
+        debug_assert!(min_size.is_multiple_of(2), "min_size must be even");
+        debug_assert!(avg_size.is_multiple_of(2), "avg_size must be even");
+        debug_assert!(max_size.is_multiple_of(2), "max_size must be even");
+        let (mask_s, mask_l) = select_masks(avg_size, level);
         let (gear, gear_ls) = get_gear_with_seed(seed);
         Self {
             source,
@@ -550,6 +645,32 @@ impl<'a> FastCDC<'a> {
         );
         (hash, start + count)
     }
+
+    ///
+    /// Re-point this chunker at a new source and reset iteration to the start,
+    /// reusing the already-computed normalization masks and gear tables.
+    ///
+    /// This is the cheap way to chunk many in-memory buffers with identical
+    /// parameters: unlike calling [`FastCDC::new`] for each buffer, it does not
+    /// recompute the masks nor (for a non-zero seed) re-allocate the gear
+    /// tables. Returns `&mut self` so the result can be iterated directly.
+    ///
+    /// ```
+    /// use fastcdc::v2020::FastCDC;
+    /// let data = vec![0u8; 200_000];
+    /// let mut chunker = FastCDC::new(&data, 4096, 16384, 65534);
+    /// // reuse the same configuration for a different buffer or region
+    /// // without rebuilding the chunker:
+    /// let total: usize = chunker.rechunk(&data[..100_000]).map(|c| c.length).sum();
+    /// assert_eq!(total, 100_000);
+    /// ```
+    ///
+    pub fn rechunk(&mut self, source: &'a [u8]) -> &mut Self {
+        self.source = source;
+        self.processed = 0;
+        self.remaining = source.len();
+        self
+    }
 }
 
 impl Iterator for FastCDC<'_> {
@@ -577,8 +698,9 @@ impl Iterator for FastCDC<'_> {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let upper_bound = self.remaining / self.min_size;
-        (1.min(upper_bound), Some(upper_bound))
+        let upper_bound = self.remaining.div_ceil(self.min_size);
+        let lower_bound = usize::from(self.remaining > 0);
+        (lower_bound, Some(upper_bound))
     }
 }
 
@@ -651,7 +773,7 @@ pub struct ChunkData {
 /// # use std::fs::File;
 /// # use fastcdc::v2020::StreamCDC;
 /// let source = File::open("test/fixtures/SekienAkashita.jpg").unwrap();
-/// let chunker = StreamCDC::new(source, 4096, 16384, 65535);
+/// let chunker = StreamCDC::new(source, 4096, 16384, 65534);
 /// for result in chunker {
 ///     let chunk = result.unwrap();
 ///     println!("offset={} length={}", chunk.offset, chunk.length);
@@ -722,10 +844,10 @@ impl<R: Read> StreamCDC<R> {
         debug_assert!(avg_size <= AVERAGE_MAX);
         debug_assert!(max_size >= MAXIMUM_MIN);
         debug_assert!(max_size <= MAXIMUM_MAX);
-        let bits = logarithm2(avg_size);
-        let normalization = level.bits();
-        let mask_s = MASKS[(bits + normalization) as usize];
-        let mask_l = MASKS[(bits - normalization) as usize];
+        debug_assert!(min_size.is_multiple_of(2), "min_size must be even");
+        debug_assert!(avg_size.is_multiple_of(2), "avg_size must be even");
+        debug_assert!(max_size.is_multiple_of(2), "max_size must be even");
+        let (mask_s, mask_l) = select_masks(avg_size, level);
         let (gear, gear_ls) = get_gear_with_seed(seed);
         Self {
             buffer: vec![0_u8; max_size],
@@ -882,6 +1004,49 @@ mod tests {
     }
 
     #[test]
+    #[should_panic]
+    fn test_min_size_odd() {
+        let array = [0u8; 1024];
+        FastCDC::new(&array, 65, 256, 1024);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_avg_size_odd() {
+        let array = [0u8; 1024];
+        FastCDC::new(&array, 64, 257, 1024);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_max_size_odd() {
+        let array = [0u8; 1024];
+        FastCDC::new(&array, 64, 256, 1025);
+    }
+
+    #[test]
+    fn test_odd_tail_hash_not_stale() {
+        // Regression test for issue #52: a forced chunk whose window is an
+        // odd number of bytes (the leftover at the very end of the source,
+        // which is not under the caller's control the way min/avg/max are)
+        // must fold its last byte into the returned hash rather than
+        // dropping it, since callers may use the hash as a fingerprint.
+        let array = [0u8; 1024 + 65];
+        let chunker = FastCDC::new(&array, 64, 256, 1024);
+        let (first_hash, first_pos) = chunker.cut(0, array.len());
+        assert_eq!(first_pos, 1024);
+        assert_eq!(first_hash, 14169102344523991076);
+        let (second_hash, second_pos) = chunker.cut(first_pos, array.len() - first_pos);
+        assert_eq!(second_pos, array.len());
+        // Before the fix this returned a stale hash of 0 (the initial
+        // accumulator value), since the trailing odd byte at offset 64 was
+        // never folded in. The correct hash is the single-byte gear update
+        // for that byte, i.e. GEAR[0] (all-zero input).
+        assert_eq!(second_hash, GEAR[0]);
+        assert_ne!(second_hash, 0);
+    }
+
+    #[test]
     fn test_masks() {
         let source = [0u8; 1024];
         let chunker = FastCDC::new(&source, 64, 256, 1024);
@@ -893,6 +1058,13 @@ mod tests {
         let chunker = FastCDC::new(&source, 1_048_576, 4_194_304, 16_777_216);
         assert_eq!(chunker.mask_l, MASKS[21]);
         assert_eq!(chunker.mask_s, MASKS[23]);
+        // Non-power-of-two avg_size: log2(12288) ~ 13.585 rounds up to 14, not
+        // down to 13. Regression guard for issue #51, where AsyncStreamCDC and
+        // the v2020_cut example used usize::ilog2 (floor) here and picked
+        // different masks than FastCDC/StreamCDC for the same arguments.
+        let chunker = FastCDC::new(&source, 3072, 12288, 49152);
+        assert_eq!(chunker.mask_l, MASKS[13]);
+        assert_eq!(chunker.mask_s, MASKS[15]);
     }
 
     #[test]
@@ -913,11 +1085,25 @@ mod tests {
     }
 
     #[test]
+    fn test_size_hint_short_tail() {
+        // A source shorter than min_size still yields exactly one chunk, so
+        // the upper bound must not be 0 while data remains (regression test
+        // for issue #50: size_hint violated the Iterator::size_hint contract).
+        let array = [0u8; 50];
+        let mut chunker = FastCDC::new(&array, 64, 256, 1024);
+        assert_eq!(chunker.size_hint(), (1, Some(1)));
+        let chunk = chunker.next().expect("one chunk expected");
+        assert_eq!(chunk.length, 50);
+        assert_eq!(chunker.size_hint(), (0, Some(0)));
+        assert_eq!(chunker.next(), None);
+    }
+
+    #[test]
     fn test_cut_sekien_16k_chunks() {
         let read_result = fs::read("test/fixtures/SekienAkashita.jpg");
         assert!(read_result.is_ok());
         let contents = read_result.unwrap();
-        let chunker = FastCDC::new(&contents, 4096, 16384, 65535);
+        let chunker = FastCDC::new(&contents, 4096, 16384, 65534);
         let mut cursor: usize = 0;
         let mut remaining: usize = contents.len();
         let expected: Vec<(u64, usize)> = vec![
@@ -943,7 +1129,7 @@ mod tests {
         assert!(read_result.is_ok());
         let contents = read_result.unwrap();
         let chunker =
-            FastCDC::with_level_and_seed(&contents, 4096, 16384, 65535, Normalization::Level1, 666);
+            FastCDC::with_level_and_seed(&contents, 4096, 16384, 65534, Normalization::Level1, 666);
         let mut cursor: usize = 0;
         let mut remaining: usize = contents.len();
         let expected: Vec<(u64, usize)> = vec![
@@ -952,7 +1138,7 @@ mod tests {
             (12271755243986371352, 11346),
             (14153975939352546047, 5883),
             (5890158701071314778, 11586),
-            (8981594897574481255, 14301),
+            (7825381280837793533, 14301),
         ];
         for (e_hash, e_length) in expected.iter() {
             let (hash, pos) = chunker.cut(cursor, remaining);
@@ -973,7 +1159,7 @@ mod tests {
         let mut cursor: usize = 0;
         let mut remaining: usize = contents.len();
         let expected: Vec<(u64, usize)> =
-            vec![(15733367461443853673, 66549), (6321136627705800457, 42917)];
+            vec![(15733367461443853673, 66549), (2504464741100432583, 42917)];
         for (e_hash, e_length) in expected.iter() {
             let (hash, pos) = chunker.cut(cursor, remaining);
             assert_eq!(hash, *e_hash);
@@ -1001,6 +1187,21 @@ mod tests {
             remaining -= e_length;
         }
         assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn test_logarithm2() {
+        // Powers of two: rounded and floored log2 agree.
+        assert_eq!(logarithm2(1024), 10);
+        assert_eq!(logarithm2(16384), 14);
+        assert_eq!(logarithm2(65536), 16);
+        // Non-powers of two: must round to nearest, not floor. These are the
+        // cases where usize::ilog2 would silently pick the wrong mask bucket
+        // (regression guard for the 4.0.0 -> 4.0.1 fix).
+        assert_eq!(logarithm2(1500), 11); // log2 ~ 10.55, rounds up
+        assert_eq!(logarithm2(12288), 14); // log2 ~ 13.585, rounds up
+        assert_eq!(logarithm2(24576), 15); // log2 ~ 14.585, rounds up
+        assert_eq!(logarithm2(1100), 10); // log2 ~ 10.103, rounds down
     }
 
     struct ExpectedChunk {
@@ -1050,7 +1251,7 @@ mod tests {
                 digest: "f6996300fce24d3da56c81ea52e5f4f461ce6adb4496f65252996e1082471aac".into(),
             },
         ];
-        let chunker = FastCDC::new(&contents, 4096, 16384, 65535);
+        let chunker = FastCDC::new(&contents, 4096, 16384, 65534);
         let mut index = 0;
         for chunk in chunker {
             assert_eq!(chunk.hash, expected_chunks[index].hash);
@@ -1070,7 +1271,7 @@ mod tests {
         let read_result = fs::read("test/fixtures/SekienAkashita.jpg");
         assert!(read_result.is_ok());
         let contents = read_result.unwrap();
-        let chunker = FastCDC::with_level(&contents, 4096, 16384, 65535, Normalization::Level0);
+        let chunker = FastCDC::with_level(&contents, 4096, 16384, 65534, Normalization::Level0);
         let mut cursor: usize = 0;
         let mut remaining: usize = contents.len();
         let expected: Vec<(u64, usize)> = vec![
@@ -1078,7 +1279,7 @@ mod tests {
             (15733367461443853673, 59915),
             (10460176299449652894, 25597),
             (6197802202431009942, 5237),
-            (6321136627705800457, 12083),
+            (2504464741100432583, 12083),
         ];
         for (e_hash, e_length) in expected.iter() {
             let (hash, pos) = chunker.cut(cursor, remaining);
@@ -1123,6 +1324,68 @@ mod tests {
     }
 
     #[test]
+    fn test_rechunk_matches_new() {
+        // `rechunk` reuses the precomputed masks/gear; for each buffer it must
+        // produce byte-for-byte identical chunks to a freshly constructed
+        // FastCDC with the same parameters. Guards reuse against drift.
+        let contents = fs::read("test/fixtures/SekienAkashita.jpg").unwrap();
+        let zeros = vec![0u8; 50_000];
+        let sources = [contents.as_slice(), zeros.as_slice()];
+        let mut chunker = FastCDC::new(sources[0], 4096, 16384, 65534);
+        for source in sources {
+            let expected: Vec<Chunk> = FastCDC::new(source, 4096, 16384, 65534).collect();
+            let got: Vec<Chunk> = chunker.rechunk(source).collect();
+            assert_eq!(got, expected);
+        }
+    }
+
+    #[test]
+    fn test_rechunk_seed_matches_new() {
+        // A seeded chunker reused via `rechunk` must match a freshly seeded one,
+        // confirming the (allocated) seeded gear tables are carried over.
+        let contents = fs::read("test/fixtures/SekienAkashita.jpg").unwrap();
+        let zeros = vec![0u8; 50_000];
+        let mut chunker =
+            FastCDC::with_level_and_seed(&contents, 4096, 16384, 65534, Normalization::Level1, 666);
+        for source in [contents.as_slice(), zeros.as_slice()] {
+            let expected: Vec<Chunk> = FastCDC::with_level_and_seed(
+                source,
+                4096,
+                16384,
+                65534,
+                Normalization::Level1,
+                666,
+            )
+            .collect();
+            let got: Vec<Chunk> = chunker.rechunk(source).collect();
+            assert_eq!(got, expected);
+        }
+    }
+
+    #[test]
+    fn test_fastcdc_covers_every_byte() {
+        // The iterator must emit contiguous chunks that cover the whole source
+        // exactly, across sub-min, all-zeros, and fixture inputs.
+        let fixture = fs::read("test/fixtures/SekienAkashita.jpg").unwrap();
+        let cases: [&[u8]; 5] = [
+            &[],
+            &[0u8; 10],     // shorter than min_size -> one (0, len) chunk
+            &[0u8; 50_000], // all zeros -> max-size chunks
+            &fixture,
+            &fixture[..4096], // exactly min_size
+        ];
+        for src in cases {
+            let mut next = 0usize;
+            for chunk in FastCDC::new(src, 4096, 16384, 65534) {
+                assert_eq!(chunk.offset, next, "chunks must be contiguous");
+                assert!(chunk.length > 0, "chunks must be non-empty");
+                next += chunk.length;
+            }
+            assert_eq!(next, src.len(), "every byte must be emitted exactly once");
+        }
+    }
+
+    #[test]
     fn test_stream_sekien_16k_chunks() {
         let file_result = File::open("test/fixtures/SekienAkashita.jpg");
         assert!(file_result.is_ok());
@@ -1160,7 +1423,7 @@ mod tests {
                 digest: "f6996300fce24d3da56c81ea52e5f4f461ce6adb4496f65252996e1082471aac".into(),
             },
         ];
-        let chunker = StreamCDC::new(file, 4096, 16384, 65535);
+        let chunker = StreamCDC::new(file, 4096, 16384, 65534);
         let mut index = 0;
         for result in chunker {
             assert!(result.is_ok());
@@ -1215,14 +1478,14 @@ mod tests {
                 digest: "503dec36fd5e032ae290f1b8291e5f6c5788814c1fc010f536b37cf9bee8bc2e".into(),
             },
             ExpectedChunk {
-                hash: 8981594897574481255,
+                hash: 7825381280837793533,
                 offset: 95165,
                 length: 14301,
                 digest: "9c5a65dea6f8adeac9f616192feca3c50cbaa0e1a12eef315132e536dc3f2d44".into(),
             },
         ];
         let chunker =
-            StreamCDC::with_level_and_seed(file, 4096, 16384, 65535, Normalization::Level1, 666);
+            StreamCDC::with_level_and_seed(file, 4096, 16384, 65534, Normalization::Level1, 666);
         let mut index = 0;
         for result in chunker {
             assert!(result.is_ok());

@@ -18,7 +18,7 @@ rust_library {
     host_supported: true,
     crate_name: "twox_hash",
     cargo_env_compat: true,
-    cargo_pkg_version: "2.1.3",
+    cargo_pkg_version: "2.1.4",
     crate_root: "src/lib.rs",
     edition: "2021",
     features: [
@@ -47,7 +47,7 @@ rust_test {
     host_supported: true,
     crate_name: "twox_hash",
     cargo_env_compat: true,
-    cargo_pkg_version: "2.1.3",
+    cargo_pkg_version: "2.1.4",
     crate_root: "src/lib.rs",
     test_suites: ["general-tests"],
     auto_gen_config: true,

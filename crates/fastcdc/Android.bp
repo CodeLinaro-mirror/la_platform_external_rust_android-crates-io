@@ -18,7 +18,7 @@ rust_library {
     host_supported: true,
     crate_name: "fastcdc",
     cargo_env_compat: true,
-    cargo_pkg_version: "4.0.1",
+    cargo_pkg_version: "5.0.0",
     crate_root: "src/lib.rs",
     edition: "2024",
     features: ["default"],

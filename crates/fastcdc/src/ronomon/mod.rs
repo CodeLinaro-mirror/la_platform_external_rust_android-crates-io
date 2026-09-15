@@ -199,8 +199,9 @@ impl Iterator for FastCDC<'_> {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let upper_bound = self.bytes_remaining / self.min_size;
-        (1.min(upper_bound), Some(upper_bound))
+        let upper_bound = self.bytes_remaining.div_ceil(self.min_size);
+        let lower_bound = usize::from(self.bytes_remaining > 0);
+        (lower_bound, Some(upper_bound))
     }
 }
 
@@ -320,6 +321,21 @@ mod tests {
     }
 
     #[test]
+    fn test_logarithm2() {
+        // Powers of two: rounded and floored log2 agree.
+        assert_eq!(logarithm2(1024), 10);
+        assert_eq!(logarithm2(16384), 14);
+        assert_eq!(logarithm2(65536), 16);
+        // Non-powers of two: must round to nearest, not floor. These are the
+        // cases where usize::ilog2 would silently pick the wrong mask bucket
+        // (regression guard for the 4.0.0 -> 4.0.1 fix).
+        assert_eq!(logarithm2(1500), 11); // log2 ~ 10.55, rounds up
+        assert_eq!(logarithm2(12288), 14); // log2 ~ 13.585, rounds up
+        assert_eq!(logarithm2(24576), 15); // log2 ~ 14.585, rounds up
+        assert_eq!(logarithm2(1100), 10); // log2 ~ 10.103, rounds down
+    }
+
+    #[test]
     #[should_panic]
     fn test_minimum_too_low() {
         let array = [0u8; 2048];
@@ -373,6 +389,20 @@ mod tests {
             assert_eq!(entry.offset % 1024, 0);
             assert_eq!(entry.length, 1024);
         }
+    }
+
+    #[test]
+    fn test_size_hint_short_tail() {
+        // A source shorter than min_size still yields exactly one chunk, so
+        // the upper bound must not be 0 while data remains (regression test
+        // for issue #50: size_hint violated the Iterator::size_hint contract).
+        let array = [0u8; 50];
+        let mut chunker = FastCDC::new(&array, 64, 256, 1024);
+        assert_eq!(chunker.size_hint(), (1, Some(1)));
+        let chunk = chunker.next().expect("one chunk expected");
+        assert_eq!(chunk.length, 50);
+        assert_eq!(chunker.size_hint(), (0, Some(0)));
+        assert_eq!(chunker.next(), None);
     }
 
     #[test]

@@ -44,7 +44,7 @@ use async_stream::try_stream;
 ///
 /// async fn run() {
 ///     let source = std::fs::read("test/fixtures/SekienAkashita.jpg").unwrap();
-///     let mut chunker = AsyncStreamCDC::new(source.as_ref(), 4096, 16384, 65535);
+///     let mut chunker = AsyncStreamCDC::new(source.as_ref(), 4096, 16384, 65534);
 ///     let stream = chunker.as_stream();
 ///
 ///     let chunks = stream.collect::<Vec<_>>().await;
@@ -121,10 +121,10 @@ impl<R: AsyncRead + Unpin> AsyncStreamCDC<R> {
         debug_assert!(avg_size <= AVERAGE_MAX);
         debug_assert!(max_size >= MAXIMUM_MIN);
         debug_assert!(max_size <= MAXIMUM_MAX);
-        let bits = avg_size.ilog2();
-        let normalization = level.bits();
-        let mask_s = MASKS[(bits + normalization) as usize];
-        let mask_l = MASKS[(bits - normalization) as usize];
+        debug_assert!(min_size.is_multiple_of(2), "min_size must be even");
+        debug_assert!(avg_size.is_multiple_of(2), "avg_size must be even");
+        debug_assert!(max_size.is_multiple_of(2), "max_size must be even");
+        let (mask_s, mask_l) = select_masks(avg_size, level);
         let (gear, gear_ls) = get_gear_with_seed(seed);
         Self {
             buffer: vec![0_u8; max_size],
@@ -308,6 +308,11 @@ mod tests {
         let chunker = AsyncStreamCDC::new(source.as_slice(), 1_048_576, 4_194_304, 16_777_216);
         assert_eq!(chunker.mask_l, MASKS[21]);
         assert_eq!(chunker.mask_s, MASKS[23]);
+        // Must agree with FastCDC/StreamCDC for a non-power-of-two avg_size.
+        // Regression guard for issue #51.
+        let chunker = AsyncStreamCDC::new(source.as_slice(), 3072, 12288, 49152);
+        assert_eq!(chunker.mask_l, MASKS[13]);
+        assert_eq!(chunker.mask_s, MASKS[15]);
     }
 
     struct ExpectedChunk {
@@ -363,7 +368,7 @@ mod tests {
                 digest: "f6996300fce24d3da56c81ea52e5f4f461ce6adb4496f65252996e1082471aac".into(),
             },
         ];
-        let mut chunker = AsyncStreamCDC::new(contents.as_ref(), 4096, 16384, 65535);
+        let mut chunker = AsyncStreamCDC::new(contents.as_ref(), 4096, 16384, 65534);
         let stream = chunker.as_stream();
 
         let chunks = stream.collect::<Vec<_>>().await;

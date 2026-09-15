@@ -18,7 +18,7 @@ rust_library {
     host_supported: true,
     crate_name: "cfg_expr",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.20.8",
+    cargo_pkg_version: "0.20.9",
     crate_root: "src/lib.rs",
     edition: "2024",
     features: ["default"],
