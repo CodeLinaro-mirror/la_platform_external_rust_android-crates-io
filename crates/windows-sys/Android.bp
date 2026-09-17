@@ -43,6 +43,7 @@ rust_library_host {
         "Win32_Storage",
         "Win32_Storage_FileSystem",
         "Win32_System",
+        "Win32_System_Console",
         "Win32_System_IO",
         "Win32_System_LibraryLoader",
         "Win32_System_Memory",

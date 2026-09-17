@@ -691,6 +691,7 @@ wayland-sys
 weak-table
 webpki
 which
+winapi-util
 windows-link
 windows-sys
 windows-targets

@@ -839,6 +839,7 @@ dependencies = [
  "wayland-server",
  "wayland-sys",
  "which 8.0.6",
+ "winapi-util",
  "windows-link",
  "windows-sys 0.61.2",
  "windows-targets 0.53.5",
