@@ -103,9 +103,7 @@ impl Key {
         self.as_repr()
             .and_then(|r| r.as_raw().as_str())
             .map(Cow::Borrowed)
-            .unwrap_or_else(|| {
-                Cow::Owned(self.default_repr().as_raw().as_str().unwrap().to_owned())
-            })
+            .unwrap_or_else(|| Cow::Owned(self.default_repr().into_raw().into_string().unwrap()))
     }
 
     /// Returns the surrounding whitespace for the line entry

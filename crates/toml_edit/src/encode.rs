@@ -26,50 +26,19 @@ pub(crate) fn encode_key(this: &Key, buf: &mut dyn Write, input: Option<&str>) -
         repr.encode(buf, input)?;
     } else {
         let repr = this.display_repr();
-        write!(buf, "{repr}")?;
+        buf.write_str(&repr)?;
     };
 
     Ok(())
 }
 
-fn encode_key_path(
-    this: &[Key],
+pub(crate) fn encode_key_path(
+    this: &[&Key],
     mut buf: &mut dyn Write,
     input: Option<&str>,
     default_decor: (&str, &str),
     leaf_decor: &Decor,
 ) -> Result {
-    for (i, key) in this.iter().enumerate() {
-        let dotted_decor = key.dotted_decor();
-
-        let first = i == 0;
-        let last = i + 1 == this.len();
-
-        if first {
-            leaf_decor.prefix_encode(buf, input, default_decor.0)?;
-        } else {
-            buf.key_sep()?;
-            dotted_decor.prefix_encode(buf, input, DEFAULT_KEY_PATH_DECOR.0)?;
-        }
-
-        encode_key(key, buf, input)?;
-
-        if last {
-            leaf_decor.suffix_encode(buf, input, default_decor.1)?;
-        } else {
-            dotted_decor.suffix_encode(buf, input, DEFAULT_KEY_PATH_DECOR.1)?;
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn encode_key_path_ref(
-    this: &[&Key],
-    mut buf: &mut dyn Write,
-    input: Option<&str>,
-    default_decor: (&str, &str),
-) -> Result {
-    let leaf_decor = this.last().expect("always at least one key").leaf_decor();
     for (i, key) in this.iter().enumerate() {
         let dotted_decor = key.dotted_decor();
 
@@ -111,7 +80,7 @@ pub(crate) fn encode_formatted<T: ValueRepr>(
         repr.encode(buf, input)?;
     } else {
         let repr = this.display_repr();
-        write!(buf, "{repr}")?;
+        buf.write_str(&repr)?;
     };
 
     decor.suffix_encode(buf, input, default_decor.1)?;
@@ -128,7 +97,7 @@ pub(crate) fn encode_array(
     decor.prefix_encode(buf, input, default_decor.0)?;
     buf.open_array()?;
 
-    for (i, elem) in this.iter().enumerate() {
+    for (i, elem) in this.iter_values().enumerate() {
         let inner_decor;
         if i == 0 {
             inner_decor = DEFAULT_LEADING_VALUE_DECOR;
@@ -170,7 +139,11 @@ pub(crate) fn encode_table(
         } else {
             DEFAULT_VALUE_DECOR
         };
-        encode_key_path_ref(&key_path, buf, input, DEFAULT_INLINE_KEY_DECOR)?;
+        let leaf_decor = key_path
+            .last()
+            .expect("always at least one key")
+            .leaf_decor();
+        encode_key_path(&key_path, buf, input, DEFAULT_INLINE_KEY_DECOR, leaf_decor)?;
         buf.keyval_sep()?;
         encode_value(value, buf, input, inner_decor)?;
     }
@@ -214,7 +187,7 @@ impl Display for DocumentMut {
             if let Some(pos) = t.position() {
                 last_position = pos;
             }
-            tables.push((last_position, t, p.clone(), is_array));
+            tables.push((last_position, t, p.to_vec(), is_array));
             Ok(())
         })
         .unwrap();
@@ -231,12 +204,12 @@ impl Display for DocumentMut {
 
 fn visit_nested_tables<'t, F>(
     table: &'t Table,
-    path: &mut Vec<Key>,
+    path: &mut Vec<&'t Key>,
     is_array_of_tables: bool,
     callback: &mut F,
 ) -> Result
 where
-    F: FnMut(&'t Table, &Vec<Key>, bool) -> Result,
+    F: FnMut(&'t Table, &[&'t Key], bool) -> Result,
 {
     if !table.is_dotted() {
         callback(table, path, is_array_of_tables)?;
@@ -245,14 +218,12 @@ where
     for (key, value) in table.items.iter() {
         match value {
             Item::Table(t) => {
-                let key = key.clone();
                 path.push(key);
                 visit_nested_tables(t, path, false, callback)?;
                 path.pop();
             }
             Item::ArrayOfTables(a) => {
-                for t in a.iter() {
-                    let key = key.clone();
+                for t in a.iter_tables() {
                     path.push(key);
                     visit_nested_tables(t, path, true, callback)?;
                     path.pop();
@@ -274,7 +245,7 @@ where
 ///   when the leaf decor prefix contains newlines.
 /// - `inside_header`: `&Decor` to use around the key path inside the brackets.
 fn leaf_decor_before_bracket<'a>(
-    path: &'a [Key],
+    path: &'a [&Key],
     input: Option<&str>,
 ) -> (Option<&'a Decor>, &'a Decor) {
     let Some(last_key) = path.last() else {
@@ -297,7 +268,7 @@ fn visit_table(
     mut buf: &mut dyn Write,
     input: Option<&str>,
     table: &Table,
-    path: &[Key],
+    path: &[&Key],
     is_array_of_tables: bool,
     first_table: &mut bool,
 ) -> Result {
@@ -355,7 +326,11 @@ fn visit_table(
     }
     // print table body
     for (key_path, value) in children {
-        encode_key_path_ref(&key_path, buf, input, DEFAULT_KEY_DECOR)?;
+        let leaf_decor = key_path
+            .last()
+            .expect("always at least one key")
+            .leaf_decor();
+        encode_key_path(&key_path, buf, input, DEFAULT_KEY_DECOR, leaf_decor)?;
         buf.keyval_sep()?;
         encode_value(value, buf, input, DEFAULT_VALUE_DECOR)?;
         writeln!(buf)?;

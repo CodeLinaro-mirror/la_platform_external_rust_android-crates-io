@@ -207,7 +207,7 @@ impl FromStr for DocumentMut {
 
     /// Parses a document from a &str
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let im = Document::from_str(s)?;
+        let im = Document::parse(s)?;
         Ok(im.into_mut())
     }
 }

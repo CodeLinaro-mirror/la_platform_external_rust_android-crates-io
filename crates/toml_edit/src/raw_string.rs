@@ -25,6 +25,15 @@ impl RawString {
         }
     }
 
+    #[cfg(feature = "display")]
+    pub(crate) fn into_string(self) -> Option<String> {
+        match self.0 {
+            RawStringInner::Empty => Some(String::new()),
+            RawStringInner::Explicit(s) => Some(s),
+            RawStringInner::Spanned(_) => None,
+        }
+    }
+
     /// The location within the original document
     ///
     /// This generally requires a [`Document`][crate::Document].
@@ -86,7 +95,7 @@ impl RawString {
     pub(crate) fn encode(&self, buf: &mut dyn std::fmt::Write, input: &str) -> std::fmt::Result {
         let raw = self.to_str(input);
         for part in raw.split('\r') {
-            write!(buf, "{part}")?;
+            buf.write_str(part)?;
         }
         Ok(())
     }
@@ -100,7 +109,7 @@ impl RawString {
     ) -> std::fmt::Result {
         let raw = self.to_str_with_default(input, default);
         for part in raw.split('\r') {
-            write!(buf, "{part}")?;
+            buf.write_str(part)?;
         }
         Ok(())
     }

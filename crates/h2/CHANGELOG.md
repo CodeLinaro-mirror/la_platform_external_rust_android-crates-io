@@ -1,3 +1,16 @@
+# 0.4.19 (August 24, 2026)
+
+* Improve default (auto) small DATA frame budget based on configured connection window.
+
+# 0.4.18 (August 20, 2026)
+
+* Add `data_frame_budget(n)` methods to client and server builders.
+
+# 0.4.17 (August 19, 2026)
+
+* Fix limiting of excessive small DATA frames to ignore EOS frames.
+* Fix HPACK encoding table to cap the max size to 4kb.
+
 # 0.4.16 (August 17, 2026)
 
 * Fix limiting excessive amount of small DATA frames.

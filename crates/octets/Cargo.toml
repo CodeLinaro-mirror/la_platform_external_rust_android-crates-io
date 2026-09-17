@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "octets"
-version = "0.3.6"
+version = "0.3.7"
 authors = ["Alessandro Ghedini <alessandro@ghedini.me>"]
 build = false
 autolib = false
@@ -36,6 +36,14 @@ huffman_hpack = []
 [lib]
 name = "octets"
 path = "src/lib.rs"
+
+[[test]]
+name = "huffman"
+path = "tests/huffman.rs"
+
+[[test]]
+name = "octets"
+path = "tests/octets.rs"
 
 [lints.clippy]
 mem_forget = "deny"

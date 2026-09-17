@@ -12,7 +12,7 @@
 [package]
 edition = "2018"
 name = "lyon_tessellation"
-version = "1.0.20"
+version = "1.0.22"
 authors = ["Nicolas Silva <nical@fastmail.com>"]
 build = false
 autolib = false

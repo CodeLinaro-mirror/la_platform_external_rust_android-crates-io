@@ -19,7 +19,7 @@ rust_library {
     host_supported: true,
     crate_name: "diplomat_runtime",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.15.1",
+    cargo_pkg_version: "0.15.2",
     crate_root: "src/lib.rs",
     edition: "2021",
     apex_available: [

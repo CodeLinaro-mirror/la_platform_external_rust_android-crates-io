@@ -11,7 +11,7 @@ pub enum Error {
     /// Filesystem access errors
     Io(io::Error),
     /// Manifest uses workspace inheritance, and the workspace failed to load
-    Workspace(Box<(Error, Option<PathBuf>)>),
+    Workspace(Box<(Self, Option<PathBuf>)>),
     /// Manifest uses workspace inheritance, and the data hasn't been inherited yet
     InheritedUnknownValue,
     /// Manifest uses workspace inheritance, but the root workspace is missing data

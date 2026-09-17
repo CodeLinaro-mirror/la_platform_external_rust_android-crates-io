@@ -45,6 +45,7 @@ pub enum InheritableSerdeParser<T> {
 }
 
 impl<T: PartialEq> PartialEq for Inheritable<T> {
+    /// `Inherited` holds an unknown value that can't be compared (works like NaN).
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Set(a), Self::Set(b)) => a.eq(b),

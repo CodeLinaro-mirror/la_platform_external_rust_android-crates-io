@@ -86,6 +86,14 @@ pub type VirtualAddress = u64;
 #[repr(transparent)]
 pub struct Boolean(pub u8);
 
+// Ensure ABI guarantees for Boolean, as promised in [0].
+//
+// [0]: https://github.com/tianocore/edk2/blob/b0f43dd3fdec2363e3548ec31eb455dc1c4ac761/MdePkg/Include/X64/ProcessorBind.h#L192
+const _: () = {
+    assert!(align_of::<Boolean>() == 1);
+    assert!(size_of::<Boolean>() == 1);
+};
+
 impl Boolean {
     /// [`Boolean`] representing `true`.
     ///
@@ -97,6 +105,29 @@ impl Boolean {
 
     /// [`Boolean`] representing `false`.
     pub const FALSE: Self = Self(0);
+
+    /// Const-compatible check for **logical equality**.
+    const fn eq_const(self, other: Self) -> bool {
+        match (self.0, other.0) {
+            (0, 0) => true,
+            (0, _) => false,
+            (_, 0) => false,
+            // We handle it as in C: Any bit-pattern != 0 equals true
+            (_, _) => true,
+        }
+    }
+
+    /// Returns whether the underlying value equals a Rust `true`.
+    #[must_use]
+    pub const fn is_true(self) -> bool {
+        Self::eq_const(self, Self::TRUE)
+    }
+
+    /// Returns whether the underlying value equals a Rust `true`.
+    #[must_use]
+    pub const fn is_false(self) -> bool {
+        !self.is_true()
+    }
 }
 
 impl From<u8> for Boolean {
@@ -127,13 +158,7 @@ impl From<Boolean> for bool {
 
 impl PartialEq for Boolean {
     fn eq(&self, other: &Self) -> bool {
-        match (self.0, other.0) {
-            (0, 0) => true,
-            (0, _) => false,
-            (_, 0) => false,
-            // We handle it as in C: Any bit-pattern != 0 equals true
-            (_, _) => true,
-        }
+        Self::eq_const(*self, *other)
     }
 }
 
@@ -169,12 +194,10 @@ mod tests {
     use super::*;
 
     #[test]
-    /// Test the properties promised in [0]. This also applies for the other
-    /// architectures.
+    /// Test the properties promised in [0] and convenient rusty conversions.
     ///
     /// [0] https://github.com/tianocore/edk2/blob/b0f43dd3fdec2363e3548ec31eb455dc1c4ac761/MdePkg/Include/X64/ProcessorBind.h#L192
-    fn test_boolean_abi() {
-        assert_eq!(size_of::<Boolean>(), 1);
+    fn test_boolean_conversions() {
         assert_eq!(Boolean::from(true).0, 1);
         assert_eq!(Boolean::from(false).0, 0);
         assert_eq!(Boolean::TRUE.0, 1);

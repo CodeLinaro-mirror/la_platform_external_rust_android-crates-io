@@ -214,7 +214,9 @@ impl<'manifest, 'config, RandomState: BuildHasher + Default> Resolver<'config, R
             &manifest.target,
         );
 
-        Self::set_required_by_bins(&mut features, &manifest.bin, manifest.package().name());
+        if let Some(package) = &manifest.package {
+            Self::set_required_by_bins(&mut features, &manifest.bin, &package.name);
+        }
 
         Self::remove_redundant_dep_action_features(&mut features, &dependencies);
         Self::set_enabled_by(&mut features);
@@ -281,7 +283,7 @@ pub enum Kind {
     Dev,
 }
 
-impl<'a, 'c, S: BuildHasher + Default> Resolver<'c, S> {
+impl<'a, S: BuildHasher + Default> Resolver<'_, S> {
     fn parse_features(features: impl Iterator<Item = (&'a String, &'a Vec<String>)>, has_explicit_default: bool) -> HashMap<&'a str, Feature<'a>, S> {
         features
             .map(|(key, f)| (key.as_str(), f.as_slice()))
@@ -620,4 +622,14 @@ loop3 = ["loop1", "implied_referenced/from_loop_3"]
     assert_eq!(rd["implied_referenced"][0].0, "loop3");
     assert_eq!(rd["depend"][0].0, "loop2");
     assert!(!rd.contains_key("a_dep"));
+}
+
+#[test]
+fn parse_virtual_manifest() {
+    let m = crate::Manifest::from_str(r#"
+[workspace]
+members = ["autobin", "autolib"]
+"#).unwrap();
+    assert!(m.package.is_none());
+    Resolver::new().parse(&m);
 }

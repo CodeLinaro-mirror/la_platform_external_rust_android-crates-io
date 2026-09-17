@@ -412,14 +412,19 @@ impl<Metadata> Manifest<Metadata> {
     ///
     /// It is `false` in manifests that use workspace inheritance, but had their data completed from the root manifest already.
     pub fn needs_workspace_inheritance(&self) -> bool {
-        self.package.as_ref().is_some_and(Package::needs_workspace_inheritance) ||
-        !self.lints.is_set() ||
+        self.package.as_ref().is_some_and(Package::needs_workspace_inheritance) || !self.lints.is_set() || self.any_dep_inherited()
+    }
+
+    fn any_dep_inherited(&self) -> bool {
         self.dependencies.values()
             .chain(self.build_dependencies.values())
             .chain(self.dev_dependencies.values())
-            .any(|dep| {
-                matches!(dep, Dependency::Inherited(_))
-            })
+            .chain(self.target.values().flat_map(|t| {
+                t.dependencies.values()
+                    .chain(t.build_dependencies.values())
+                    .chain(t.dev_dependencies.values())
+            }))
+            .any(|dep| matches!(dep, Dependency::Inherited(_)))
     }
 
     fn _inherit_workspace<Ignored>(&mut self, workspace: Option<&Workspace<Ignored>>, workspace_base_path: &Path) -> Result<(), Error> {
@@ -671,8 +676,15 @@ impl<Metadata> Manifest<Metadata> {
     ///
     /// You can access the `.package` field directly to handle the `Option`:
     ///
-    /// ```rust,ignore
-    /// manifest.package.as_ref().ok_or(SomeError::NotAPackage)?;
+    /// ```
+    /// use cargo_toml::Manifest;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let manifest = Manifest::from_str("[package]\nname = \"dunce\"\nversion = \"0.1.0\"\n")?;
+    /// let package = manifest.package.as_ref().ok_or("not a package")?;
+    /// assert_eq!(package.name, "dunce");
+    /// # Ok(())
+    /// # }
     /// ```
     #[track_caller]
     #[inline]
@@ -1138,9 +1150,9 @@ impl Dependency {
     pub fn try_req(&self) -> Result<&VersionReq, Error> {
         static STAR: VersionReq = VersionReq::STAR;
         match self {
-            Dependency::Simple(v) => Ok(v),
-            Dependency::Detailed(d) => Ok(d.version.as_ref().unwrap_or(&STAR)),
-            Dependency::Inherited(_) =>  Err(Error::InheritedUnknownValue),
+            Self::Simple(v) => Ok(v),
+            Self::Detailed(d) => Ok(d.version.as_ref().unwrap_or(&STAR)),
+            Self::Inherited(_) =>  Err(Error::InheritedUnknownValue),
         }
     }
 
@@ -1712,13 +1724,13 @@ impl<Metadata> Package<Metadata> {
         self.include.is_set() &&
         self.keywords.is_set() &&
         self.version.is_set() &&
-        self.description.as_ref().map_or(true, Inheritable::is_set) &&
-        self.documentation.as_ref().map_or(true, Inheritable::is_set) &&
-        self.homepage.as_ref().map_or(true, Inheritable::is_set) &&
-        self.license.as_ref().map_or(true, Inheritable::is_set) &&
-        self.license_file.as_ref().map_or(true, Inheritable::is_set) &&
-        self.repository.as_ref().map_or(true, Inheritable::is_set) &&
-        self.rust_version.as_ref().map_or(true, Inheritable::is_set) &&
+        self.description.as_ref().is_none_or(Inheritable::is_set) &&
+        self.documentation.as_ref().is_none_or(Inheritable::is_set) &&
+        self.homepage.as_ref().is_none_or(Inheritable::is_set) &&
+        self.license.as_ref().is_none_or(Inheritable::is_set) &&
+        self.license_file.as_ref().is_none_or(Inheritable::is_set) &&
+        self.repository.as_ref().is_none_or(Inheritable::is_set) &&
+        self.rust_version.as_ref().is_none_or(Inheritable::is_set) &&
         self.publish.is_set() &&
         self.readme.is_set())
     }
