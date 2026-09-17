@@ -1,4 +1,6 @@
-use crate::{os, util, Protection, QueryIter, Region, Result};
+use alloc::vec::Vec;
+
+use crate::{Protection, QueryIter, Region, Result, os, util};
 
 /// Changes the memory protection of one or more pages.
 ///
@@ -18,10 +20,10 @@ use crate::{os, util, Protection, QueryIter, Region, Result};
 /// # Errors
 ///
 /// - If an interaction with the underlying operating system fails, an error
-/// will be returned.
+///   will be returned.
 /// - If size is zero,
-/// [`Error::InvalidParameter`](crate::Error::InvalidParameter) will be
-/// returned.
+///   [`Error::InvalidParameter`](crate::Error::InvalidParameter) will be
+///   returned.
 ///
 /// # Safety
 ///
@@ -42,7 +44,7 @@ use crate::{os, util, Protection, QueryIter, Region, Result};
 ///
 /// let x: extern "C" fn() -> i32 = unsafe {
 ///   region::protect(ret5.as_ptr(), ret5.len(), region::Protection::READ_WRITE_EXECUTE)?;
-///   std::mem::transmute(ret5.as_ptr())
+///   core::mem::transmute(ret5.as_ptr())
 /// };
 ///
 /// assert_eq!(x(), 5);
@@ -53,7 +55,7 @@ use crate::{os, util, Protection, QueryIter, Region, Result};
 #[inline]
 pub unsafe fn protect<T>(address: *const T, size: usize, protection: Protection) -> Result<()> {
   let (address, size) = util::round_to_page_boundaries(address, size)?;
-  os::protect(address.cast(), size, protection)
+  unsafe { os::protect(address.cast(), size, protection) }
 }
 
 /// Temporarily changes the memory protection of one or more pages.
@@ -61,7 +63,7 @@ pub unsafe fn protect<T>(address: *const T, size: usize, protection: Protection)
 /// The address range may overlap one or more pages, and if so, all pages within
 /// the range will be modified. The protection flag for each page will be reset
 /// once the handle is dropped. To conditionally prevent a reset, use
-/// [`std::mem::forget`].
+/// [`core::mem::forget`].
 ///
 /// This function uses [`query_range`](crate::query_range) internally and is
 /// therefore less performant than [`protect`]. Use this function only if you
@@ -90,10 +92,10 @@ pub unsafe fn protect<T>(address: *const T, size: usize, protection: Protection)
 /// # Errors
 ///
 /// - If an interaction with the underlying operating system fails, an error
-/// will be returned.
+///   will be returned.
 /// - If size is zero,
-/// [`Error::InvalidParameter`](crate::Error::InvalidParameter) will be
-/// returned.
+///   [`Error::InvalidParameter`](crate::Error::InvalidParameter) will be
+///   returned.
 ///
 /// # Safety
 ///
@@ -110,18 +112,18 @@ pub unsafe fn protect_with_handle<T>(
   let mut regions = QueryIter::new(address, size)?.collect::<Result<Vec<_>>>()?;
 
   // Apply the desired protection flags
-  protect(address, size, protection)?;
+  unsafe { protect(address, size, protection)? };
 
   if let Some(region) = regions.first_mut() {
     // Offset the lower region to the smallest page boundary
     region.base = address.cast();
-    region.size -= address as usize - region.as_range().start;
+    region.size -= address.addr().saturating_sub(region.as_range().start);
   }
 
   if let Some(region) = regions.last_mut() {
     // Truncate the upper region to the smallest page boundary
-    let protect_end = address as usize + size;
-    region.size -= region.as_range().end - protect_end;
+    let protect_end = address.addr().saturating_add(size);
+    region.size -= region.as_range().end.saturating_sub(protect_end);
   }
 
   Ok(ProtectGuard::new(regions))
@@ -158,14 +160,16 @@ unsafe impl Send for ProtectGuard {}
 unsafe impl Sync for ProtectGuard {}
 
 #[cfg(test)]
+#[allow(invalid_reference_casting)]
 mod tests {
   use super::*;
   use crate::tests::util::alloc_pages;
   use crate::{page, query, query_range};
+  use core::ptr;
 
   #[test]
   fn protect_null_fails() {
-    assert!(unsafe { protect(std::ptr::null::<()>(), 0, Protection::NONE) }.is_err());
+    assert!(unsafe { protect(ptr::null::<()>(), 0, Protection::NONE) }.is_err());
   }
 
   #[test]
@@ -175,8 +179,8 @@ mod tests {
     all(target_vendor = "apple", target_arch = "aarch64")
   )))]
   fn protect_can_alter_text_segments() {
-    #[allow(clippy::ptr_as_ptr)]
-    let address = &mut protect_can_alter_text_segments as *mut _ as *mut u8;
+    let mut stub = protect_can_alter_text_segments as fn();
+    let address = (&raw mut stub).cast::<u8>();
     unsafe {
       protect(address, 1, Protection::READ_WRITE_EXECUTE).unwrap();
       *address = 0x90;
@@ -282,16 +286,24 @@ mod tests {
       let region = query(second_page)?;
 
       assert_eq!(region.protection(), Protection::NONE);
-      assert_eq!(region.as_ptr(), second_page);
+      // Some platforms may merge adjacent identically protected pages, so the
+      // returned region base can precede `second_page` as long as it contains it.
+      assert!(region.as_range().contains(&second_page.addr()));
     }
 
     let regions =
       query_range(map.as_ptr(), page::size() * pages.len())?.collect::<Result<Vec<_>>>()?;
 
-    assert_eq!(regions.len(), 5);
-    assert_eq!(regions[0].as_ptr(), map.as_ptr());
-    for i in 0..pages.len() {
-      assert_eq!(regions[i].protection(), pages[i]);
+    // Region descriptors may be merged or split depending on the OS query
+    // backend; compare by page rather than assuming a 1:1 region count/base.
+    assert!(!regions.is_empty());
+    for (index, expected) in pages.iter().enumerate() {
+      let address = unsafe { map.as_ptr().add(page::size() * index) };
+      let region = regions
+        .iter()
+        .find(|region| region.as_range().contains(&address.addr()))
+        .expect("expected region covering page");
+      assert_eq!(region.protection(), *expected);
     }
 
     Ok(())

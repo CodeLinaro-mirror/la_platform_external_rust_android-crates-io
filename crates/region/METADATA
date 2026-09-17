@@ -1,17 +1,17 @@
 name: "region"
 description: "Cross-platform virtual memory API"
 third_party {
-  version: "3.0.2"
+  version: "4.0.0"
   license_type: NOTICE
   last_upgrade_date {
     year: 2026
-    month: 3
-    day: 18
+    month: 9
+    day: 17
   }
   homepage: "https://crates.io/crates/region"
   identifier {
     type: "crates.io"
     value: "region"
-    version: "3.0.2"
+    version: "4.0.0"
   }
 }
