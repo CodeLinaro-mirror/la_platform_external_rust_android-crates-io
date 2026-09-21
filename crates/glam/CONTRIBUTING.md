@@ -7,6 +7,11 @@ The short guide to contributing is [start a discussion] on GitHub.  Pull
 requests are welcome for bug fixes, documentation improvements and
 optimizations. For anything else it would be best to discuss it first.
 
+## Use of AI
+
+All use of AI in contributions must follow the [AI Policy]. Contributions not
+following the AI Policy will be closed.
+
 ## Questions
 
 If you have a question about the usage of this library please [ask a question]
@@ -113,3 +118,4 @@ Also run `cargo fmt` on any new hand-written files and `cargo clippy` on any new
 [Tera v2]: https://keats.github.io/tera/
 [Conventional Commits]: https://www.conventionalcommits.org/
 [changelog]: CHANGELOG.md
+[AI Policy]: AI_POLICY.md

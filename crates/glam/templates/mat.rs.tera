@@ -192,16 +192,9 @@ pub const fn {{ self_t | lower }}(
 /// This type is 16 byte aligned.
 {%- endif %}
 #[derive(Clone, Copy)]
-{%- if self_t == "Mat3A" and is_scalar %}
-#[cfg_attr(feature = "bytemuck", derive(bytemuck::AnyBitPattern))]
-{%- if not is_coresimd %}
-#[cfg_attr(feature = "zerocopy", derive(FromBytes, Immutable, KnownLayout))]
-{%- endif %}
-{%- else %}
 #[cfg_attr(feature = "bytemuck", derive(bytemuck::Pod, bytemuck::Zeroable))]
 {%- if not is_coresimd %}
 #[cfg_attr(feature = "zerocopy", derive(FromBytes, Immutable, IntoBytes, KnownLayout))]
-{%- endif %}
 {%- endif %}
 {%- if self_t == "Mat4" and is_scalar %}
 #[cfg_attr(any(not(feature = "scalar-math"), feature = "cuda"), repr(align(16)))]
@@ -2487,10 +2480,23 @@ impl {{ self_t }} {
     #[inline]
     #[must_use]
     pub fn mul_vec3a(&self, rhs: Vec3A) -> Vec3A {
+        {% if is_scalar %}
+        {#
+            Written as explicit row-dot products rather than swizzles: the scalar Vec3A has an
+            initialized padding lane which drives LLVM's vectorizer into shuffle-heavy code,
+            regressing scalar-math benches on x86_64 by ~20 instructions.
+        #}
+        Vec3A::new(
+            self.x_axis.x * rhs.x + self.y_axis.x * rhs.y + self.z_axis.x * rhs.z,
+            self.x_axis.y * rhs.x + self.y_axis.y * rhs.y + self.z_axis.y * rhs.z,
+            self.x_axis.z * rhs.x + self.y_axis.z * rhs.y + self.z_axis.z * rhs.z,
+        )
+        {% else %}
         let mut res = self.x_axis.mul(rhs.xxx());
         res = res.add(self.y_axis.mul(rhs.yyy()));
         res = res.add(self.z_axis.mul(rhs.zzz()));
         res
+        {% endif %}
     }
 {% endif %}
 

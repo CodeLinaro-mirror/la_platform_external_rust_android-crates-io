@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.68.2"
 name = "glam"
-version = "0.33.5"
+version = "0.33.6"
 build = false
 autolib = false
 autobins = false
@@ -283,6 +283,11 @@ default-features = false
 
 [dependencies.encase]
 version = "0.12"
+optional = true
+default-features = false
+
+[dependencies.float_eq]
+version = "1.0.1"
 optional = true
 default-features = false
 
