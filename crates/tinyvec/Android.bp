@@ -19,7 +19,7 @@ rust_library {
     host_supported: true,
     crate_name: "tinyvec",
     cargo_env_compat: true,
-    cargo_pkg_version: "1.12.0",
+    cargo_pkg_version: "1.13.2",
     crate_root: "src/lib.rs",
     edition: "2018",
     features: [
