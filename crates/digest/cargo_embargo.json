@@ -1,9 +1,0 @@
-{
-  "features": [
-    "std",
-    "core-api",
-    "oid"
-  ],
-  "run_cargo": false,
-  "min_sdk_version": "29"
-}

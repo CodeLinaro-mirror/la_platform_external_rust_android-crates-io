@@ -1,9 +1,0 @@
-{
-  "module_visibility": {
-    "libsha2": [
-      "//external/rust/android-crates-io/crates/smithay:__subpackages__"
-    ]
-  },
-  "run_cargo": false,
-  "min_sdk_version": "29"
-}
