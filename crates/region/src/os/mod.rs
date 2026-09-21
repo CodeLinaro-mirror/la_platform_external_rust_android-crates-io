@@ -16,10 +16,10 @@ mod macos;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub use self::macos::*;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "hurd"))]
 mod linux;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "hurd"))]
 pub use self::linux::*;
 
 #[cfg(target_os = "freebsd")]
@@ -45,3 +45,9 @@ mod netbsd;
 
 #[cfg(target_os = "netbsd")]
 pub use self::netbsd::*;
+
+#[cfg(target_os = "redox")]
+mod redox;
+
+#[cfg(target_os = "redox")]
+pub use self::redox::*;
