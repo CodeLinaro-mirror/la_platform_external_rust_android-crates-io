@@ -17,6 +17,13 @@ pub trait FloatExt {
     /// `a` and `b` must not be equal, otherwise the result will be either infinite or `NAN`.
     fn inverse_lerp(a: Self, b: Self, v: Self) -> Self;
 
+    /// Performs Hermite interpolation between `0.0` and `1.0` using `x` normalized to `[edge0, edge1]`.
+    ///
+    /// This is equivalent to `t * t * (3.0 - 2.0 * t)`, where `t` is clamped to `[0.0, 1.0]`.
+    /// Results are undefined if `edge0` is greater than or equal to `edge1`.
+    #[must_use]
+    fn smoothstep(self, edge0: Self, edge1: Self) -> Self;
+
     /// Remap `self` from the input range to the output range.
     ///
     /// When `self` is equal to `in_start` this returns `out_start`.
@@ -45,4 +52,12 @@ pub trait FloatExt {
     /// Returns `self` clamped within the range `[0.0, 1.0]`
     #[must_use]
     fn saturate(self) -> Self;
+
+    /// Moves `self` towards `rhs` by at most the distance `d`.
+    ///
+    /// When `d` is `0.0`, the result will be equal to `self`. When `d` is greater than or
+    /// equal to the distance between `self` and `rhs`, the result will be equal to `rhs`.
+    /// Will not go past `rhs`.
+    #[must_use]
+    fn move_towards(self, rhs: Self, d: Self) -> Self;
 }
