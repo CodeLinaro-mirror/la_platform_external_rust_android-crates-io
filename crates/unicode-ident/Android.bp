@@ -24,7 +24,7 @@ rust_library {
     host_supported: true,
     crate_name: "unicode_ident",
     cargo_env_compat: true,
-    cargo_pkg_version: "1.0.24",
+    cargo_pkg_version: "1.0.25",
     crate_root: "src/lib.rs",
     edition: "2021",
     apex_available: [
