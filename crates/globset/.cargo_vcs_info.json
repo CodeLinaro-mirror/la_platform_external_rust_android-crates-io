@@ -1,6 +1,6 @@
 {
   "git": {
-    "sha1": "28c687d630f1491ccdea078a9be56b4cdc124519"
+    "sha1": "5055264ae021b5d0e01e55f723622d638ea877f0"
   },
   "path_in_vcs": "crates/globset"
 }
