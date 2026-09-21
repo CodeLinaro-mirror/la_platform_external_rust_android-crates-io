@@ -1,10 +1,13 @@
-use crate::{os, page, util, Error, Protection, Result};
+use core::mem::ManuallyDrop;
+use core::ops::Range;
+use core::ptr;
+
+use crate::{Error, Protection, Result, os, page, util};
 
 /// A handle to an owned region of memory.
 ///
 /// This handle does not dereference to a slice, since the underlying memory may
 /// have been created with [`Protection::NONE`].
-#[allow(clippy::len_without_is_empty)]
 pub struct Allocation {
   base: *const (),
   size: usize,
@@ -22,7 +25,7 @@ impl Allocation {
   /// Returns a mutable pointer to the allocation's base address.
   #[inline(always)]
   pub fn as_mut_ptr<T>(&mut self) -> *mut T {
-    self.base as *mut T
+    self.base.cast_mut().cast()
   }
 
   /// Returns two raw pointers spanning the allocation's address space.
@@ -32,22 +35,24 @@ impl Allocation {
   /// is represented by two equal pointers, and the difference between the two
   /// pointers represents the size of the allocation.
   #[inline(always)]
-  pub fn as_ptr_range<T>(&self) -> std::ops::Range<*const T> {
+  pub fn as_ptr_range<T>(&self) -> Range<*const T> {
     let range = self.as_range();
-    (range.start as *const T)..(range.end as *const T)
+    ptr::with_exposed_provenance::<T>(range.start)..ptr::with_exposed_provenance::<T>(range.end)
   }
 
   /// Returns two mutable raw pointers spanning the allocation's address space.
   #[inline(always)]
-  pub fn as_mut_ptr_range<T>(&mut self) -> std::ops::Range<*mut T> {
+  pub fn as_mut_ptr_range<T>(&mut self) -> Range<*mut T> {
     let range = self.as_range();
-    (range.start as *mut T)..(range.end as *mut T)
+    ptr::with_exposed_provenance_mut::<T>(range.start)
+      ..ptr::with_exposed_provenance_mut::<T>(range.end)
   }
 
   /// Returns a range spanning the allocation's address space.
   #[inline(always)]
-  pub fn as_range(&self) -> std::ops::Range<usize> {
-    (self.base as usize)..(self.base as usize).saturating_add(self.size)
+  pub fn as_range(&self) -> Range<usize> {
+    let start = self.base.addr();
+    start..start.saturating_add(self.size)
   }
 
   /// Returns the size of the allocation in bytes.
@@ -57,6 +62,42 @@ impl Allocation {
   #[inline(always)]
   pub fn len(&self) -> usize {
     self.size
+  }
+
+  /// Returns whether the allocation is empty or not.
+  #[inline(always)]
+  pub fn is_empty(&self) -> bool {
+    self.size == 0
+  }
+
+  /// Decomposes an `Allocation` into its raw components: `(pointer, length)`.
+  ///
+  /// After calling this function, the caller is responsible for the previously
+  /// managed allocation.
+  ///
+  /// For creating an `Allocation` from raw components, see [`Self::from_raw_parts`].
+  #[inline]
+  pub fn into_raw_parts<T>(self) -> (*mut T, usize) {
+    let mut this = ManuallyDrop::new(self);
+    (this.as_mut_ptr(), this.len())
+  }
+
+  /// Creates a `Allocation` directly from a pointer, and a length.
+  ///
+  /// For decomposing an `Allocation` into raw components, see
+  /// [`Self::into_raw_parts`].
+  ///
+  /// # Safety
+  ///
+  /// This is highly unsafe because given `ptr` and `length` could not
+  /// be checked as valid allocation, and the caller should guarantee
+  /// that they are valid parts.
+  #[inline(always)]
+  pub unsafe fn from_raw_parts<T>(ptr: *mut T, length: usize) -> Self {
+    Self {
+      base: ptr.cast(),
+      size: length,
+    }
   }
 }
 
@@ -82,13 +123,16 @@ impl Drop for Allocation {
 /// # Errors
 ///
 /// - If an interaction with the underlying operating system fails, an error
-/// will be returned.
+///   will be returned.
 /// - If size is zero, [`Error::InvalidParameter`] will be returned.
 ///
 /// # OS-Specific Behavior
 ///
 /// On NetBSD pages will be allocated without PaX memory protection restrictions
 /// (i.e. pages will be allowed to be modified to any combination of `RWX`).
+///
+/// On Windows, allocating with [`Protection::NONE`] reserves address space
+/// without committing physical pages.
 ///
 /// # Examples
 ///
@@ -101,11 +145,11 @@ impl Drop for Allocation {
 ///
 /// let memory = region::alloc(100, Protection::READ_WRITE_EXECUTE)?;
 /// let slice = unsafe {
-///   std::slice::from_raw_parts_mut(memory.as_ptr::<u8>() as *mut u8, memory.len())
+///   core::slice::from_raw_parts_mut(memory.as_ptr::<u8>().cast_mut(), memory.len())
 /// };
 ///
 /// slice[..6].copy_from_slice(&ret5);
-/// let x: extern "C" fn() -> i32 = unsafe { std::mem::transmute(slice.as_ptr()) };
+/// let x: extern "C" fn() -> i32 = unsafe { core::mem::transmute(slice.as_ptr()) };
 ///
 /// assert_eq!(x(), 5);
 /// # }
@@ -118,10 +162,10 @@ pub fn alloc(size: usize, protection: Protection) -> Result<Allocation> {
     return Err(Error::InvalidParameter("size"));
   }
 
-  let size = page::ceil(size as *const ()) as usize;
+  let size = page::ceil(ptr::without_provenance::<()>(size)).addr();
 
   unsafe {
-    let base = os::alloc(std::ptr::null::<()>(), size, protection)?;
+    let base = os::alloc(ptr::null::<()>(), size, protection)?;
     Ok(Allocation { base, size })
   }
 }
@@ -149,7 +193,7 @@ pub fn alloc(size: usize, protection: Protection) -> Result<Allocation> {
 /// # Errors
 ///
 /// - If an interaction with the underlying operating system fails, an error
-/// will be returned.
+///   will be returned.
 /// - If size is zero, [`Error::InvalidParameter`] will be returned.
 #[inline]
 pub fn alloc_at<T>(address: *const T, size: usize, protection: Protection) -> Result<Allocation> {
@@ -195,24 +239,28 @@ mod tests {
   }
 
   #[test]
+  #[cfg(not(target_os = "netbsd"))]
   fn alloc_frees_memory_when_dropped() -> Result<()> {
     // Designing these tests can be quite tricky sometimes. When a page is
     // allocated and then released, a subsequent `query` may allocate memory in
     // the same location that has just been freed. For instance, NetBSD's
     // kinfo_getvmmap uses `mmap` internally, which can lead to potentially
-    // confusing outcomes. To mitigate this, an additional buffer region is
-    // allocated to ensure that any memory allocated indirectly through `query`
-    // occupies a separate location in memory.
-    let (start, _buffer) = (
-      alloc(1, Protection::READ_WRITE)?,
-      alloc(1, Protection::READ_WRITE)?,
-    );
+    // confusing outcomes. Retain several buffer regions so any memory allocated
+    // indirectly through `query` occupies a separate location in memory.
+    let buffers = (0..8)
+      .map(|_| alloc(1, Protection::READ_WRITE))
+      .collect::<Result<alloc::vec::Vec<_>>>()?;
+    let start = alloc(1, Protection::READ_WRITE)?;
 
     let base = start.as_ptr::<()>();
-    std::mem::drop(start);
+    drop(start);
 
     let query = crate::query(base);
-    assert!(matches!(query, Err(Error::UnmappedRegion)));
+    assert!(
+      matches!(query, Err(Error::UnmappedRegion)),
+      "expected unmapped region after free, got {query:?}; retained {} buffers",
+      buffers.len()
+    );
     Ok(())
   }
 
@@ -229,6 +277,17 @@ mod tests {
   fn alloc_can_allocate_executable_region() -> Result<()> {
     let memory = alloc(1, Protection::WRITE_EXECUTE)?;
     assert_eq!(memory.len(), page::size());
+    Ok(())
+  }
+
+  #[test]
+  #[cfg(all(windows, target_pointer_width = "64"))]
+  fn alloc_can_reserve_large_parts_of_address_space() -> Result<()> {
+    // Request 1 TB of address space
+    let base = alloc(1 << 40, Protection::NONE)?.as_ptr::<()>();
+    // We should be able to partially commit these pages
+    let memory = alloc_at(base, 1, Protection::READ_WRITE)?;
+    assert_eq!(memory.as_ptr(), base);
     Ok(())
   }
 }

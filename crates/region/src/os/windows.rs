@@ -1,14 +1,15 @@
 use crate::{Error, Protection, Region, Result};
-use std::cmp::{max, min};
-use std::ffi::c_void;
-use std::io;
-use std::mem::{size_of, MaybeUninit};
-use std::sync::Once;
+use alloc::boxed::Box;
+use core::cmp::{max, min};
+use core::ffi::c_void;
+use core::mem::{MaybeUninit, size_of};
+use core::ptr;
+use core::sync::atomic::{AtomicPtr, Ordering};
 use windows_sys::Win32::System::Memory::{
-  VirtualAlloc, VirtualFree, VirtualLock, VirtualProtect, VirtualQuery, VirtualUnlock,
-  MEMORY_BASIC_INFORMATION, MEM_COMMIT, MEM_PRIVATE, MEM_RELEASE, MEM_RESERVE, PAGE_EXECUTE,
+  MEM_COMMIT, MEM_PRIVATE, MEM_RELEASE, MEM_RESERVE, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE,
   PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_NOACCESS,
-  PAGE_NOCACHE, PAGE_READONLY, PAGE_READWRITE, PAGE_WRITECOMBINE, PAGE_WRITECOPY,
+  PAGE_NOCACHE, PAGE_READONLY, PAGE_READWRITE, PAGE_WRITECOMBINE, PAGE_WRITECOPY, VirtualAlloc,
+  VirtualFree, VirtualLock, VirtualProtect, VirtualQuery, VirtualUnlock,
 };
 use windows_sys::Win32::System::SystemInformation::{GetNativeSystemInfo, SYSTEM_INFO};
 
@@ -22,9 +23,9 @@ impl QueryIter {
     let system = system_info();
 
     Ok(QueryIter {
-      region_address: max(origin as usize, system.lpMinimumApplicationAddress as usize),
+      region_address: max(origin.addr(), system.lpMinimumApplicationAddress as usize),
       upper_bound: min(
-        (origin as usize).saturating_add(size),
+        origin.addr().saturating_add(size),
         system.lpMaximumApplicationAddress as usize,
       ),
     })
@@ -39,36 +40,38 @@ impl Iterator for QueryIter {
   type Item = Result<Region>;
 
   fn next(&mut self) -> Option<Self::Item> {
-    let mut info: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+    let mut info = MaybeUninit::<MEMORY_BASIC_INFORMATION>::uninit();
 
     while self.region_address < self.upper_bound {
       let bytes = unsafe {
         VirtualQuery(
-          self.region_address as *mut c_void,
-          &mut info,
+          ptr::with_exposed_provenance::<c_void>(self.region_address),
+          info.as_mut_ptr(),
           size_of::<MEMORY_BASIC_INFORMATION>(),
         )
       };
 
       if bytes == 0 {
-        return Some(Err(Error::SystemCall(io::Error::last_os_error())));
+        return Some(Err(Error::last_os_error()));
       }
 
+      let info = unsafe { info.assume_init() };
       self.region_address = (info.BaseAddress as usize).saturating_add(info.RegionSize);
 
       // Only mapped memory regions are of interest
       if info.State == MEM_RESERVE || info.State == MEM_COMMIT {
         let mut region = Region {
-          base: info.BaseAddress as *const _,
+          base: ptr::with_exposed_provenance(info.BaseAddress as usize),
           reserved: info.State != MEM_COMMIT,
           guarded: (info.Protect & PAGE_GUARD) != 0,
           shared: (info.Type & MEM_PRIVATE) == 0,
-          size: info.RegionSize as usize,
+          size: info.RegionSize,
           ..Default::default()
         };
 
         if region.is_committed() {
           region.protection = Protection::from_native(info.Protect);
+          region.max_protection = region.protection;
         }
 
         return Some(Ok(region));
@@ -84,64 +87,110 @@ pub fn page_size() -> usize {
 }
 
 pub unsafe fn alloc(base: *const (), size: usize, protection: Protection) -> Result<*const ()> {
-  let allocation = VirtualAlloc(
-    base as *mut c_void,
-    size,
-    MEM_COMMIT | MEM_RESERVE,
-    protection.to_native(),
-  );
+  // Reserving without committing is required for large `Protection::NONE`
+  // allocations that only need address space.
+  let allocation_type = if protection == Protection::NONE {
+    MEM_RESERVE
+  } else {
+    MEM_COMMIT | MEM_RESERVE
+  };
+
+  let allocation = unsafe {
+    VirtualAlloc(
+      base.cast_mut().cast(),
+      size,
+      allocation_type,
+      protection.to_native(),
+    )
+  };
 
   if allocation.is_null() {
-    return Err(Error::SystemCall(io::Error::last_os_error()));
+    return Err(Error::last_os_error());
   }
 
-  Ok(allocation as *const ())
+  Ok(allocation.cast())
 }
 
 pub unsafe fn free(base: *const (), _size: usize) -> Result<()> {
-  match VirtualFree(base as *mut c_void, 0, MEM_RELEASE) {
-    0 => Err(Error::SystemCall(io::Error::last_os_error())),
+  match unsafe { VirtualFree(base.cast_mut().cast(), 0, MEM_RELEASE) } {
+    0 => Err(Error::last_os_error()),
     _ => Ok(()),
   }
 }
 
 pub unsafe fn protect(base: *const (), size: usize, protection: Protection) -> Result<()> {
-  let result = VirtualProtect(base as *mut c_void, size, protection.to_native(), &mut 0);
+  let mut old_protect = 0;
+  let result = unsafe {
+    VirtualProtect(
+      base.cast_mut().cast(),
+      size,
+      protection.to_native(),
+      &mut old_protect,
+    )
+  };
 
   if result == 0 {
-    Err(Error::SystemCall(io::Error::last_os_error()))
+    Err(Error::last_os_error())
   } else {
     Ok(())
   }
 }
 
 pub fn lock(base: *const (), size: usize) -> Result<()> {
-  let result = unsafe { VirtualLock(base as *mut c_void, size) };
+  let result = unsafe { VirtualLock(base.cast_mut().cast(), size) };
 
   if result == 0 {
-    Err(Error::SystemCall(io::Error::last_os_error()))
+    Err(Error::last_os_error())
   } else {
     Ok(())
   }
 }
 
 pub fn unlock(base: *const (), size: usize) -> Result<()> {
-  let result = unsafe { VirtualUnlock(base as *mut c_void, size) };
+  let result = unsafe { VirtualUnlock(base.cast_mut().cast(), size) };
 
   if result == 0 {
-    Err(Error::SystemCall(io::Error::last_os_error()))
+    Err(Error::last_os_error())
   } else {
     Ok(())
   }
 }
 
-fn system_info() -> &'static SYSTEM_INFO {
-  static INIT: Once = Once::new();
-  static mut INFO: MaybeUninit<SYSTEM_INFO> = MaybeUninit::uninit();
+// `SYSTEM_INFO` contains two `*mut c_void` pointers, but they are only used as
+// numerical values and never dereferenced. Hence, it's safe to share.
+struct SystemInfo(SYSTEM_INFO);
 
+unsafe impl Send for SystemInfo {}
+unsafe impl Sync for SystemInfo {}
+
+fn system_info() -> &'static SYSTEM_INFO {
+  // `Once` / `OnceLock` live in `std` on the Windows targets we support, so use
+  // atomics for a `no_std`-friendly one-time cache.
+  static CACHED: AtomicPtr<SystemInfo> = AtomicPtr::new(core::ptr::null_mut());
+
+  let cached = CACHED.load(Ordering::Acquire);
+  if !cached.is_null() {
+    return unsafe { &(*cached).0 };
+  }
+
+  let mut info = MaybeUninit::<SYSTEM_INFO>::uninit();
   unsafe {
-    INIT.call_once(|| GetNativeSystemInfo(INFO.as_mut_ptr()));
-    &*INFO.as_ptr()
+    GetNativeSystemInfo(info.as_mut_ptr());
+  }
+
+  let boxed = Box::new(SystemInfo(unsafe { info.assume_init() }));
+  let ptr = Box::into_raw(boxed);
+  match CACHED.compare_exchange(
+    core::ptr::null_mut(),
+    ptr,
+    Ordering::AcqRel,
+    Ordering::Acquire,
+  ) {
+    Ok(_) => unsafe { &(*ptr).0 },
+    Err(existing) => unsafe {
+      drop(Box::from_raw(ptr));
+      &(*existing).0
+    },
   }
 }
 

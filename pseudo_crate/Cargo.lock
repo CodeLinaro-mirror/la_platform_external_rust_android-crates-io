@@ -651,7 +651,7 @@ dependencies = [
  "regex-automata",
  "regex-lite",
  "regex-syntax",
- "region",
+ "region 4.0.0",
  "relative-path 2.0.1",
  "remain",
  "reqwest 0.12.28",
@@ -6148,7 +6148,7 @@ dependencies = [
  "lock_api",
  "memmap2",
  "parking_lot",
- "region",
+ "region 3.0.2",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
@@ -8632,6 +8632,18 @@ dependencies = [
  "libc 0.2.189",
  "mach2",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "region"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "430988f137a23121407b362bf10b09df302ed5092ffeb9af90a549edcc849115"
+dependencies = [
+ "bitflags 2.13.1",
+ "libc 0.2.189",
+ "mach2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
