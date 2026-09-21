@@ -59,5 +59,6 @@ rust_library {
     visibility: [
         "//system/software_defined_vehicle:__subpackages__",
         "//tools/netsim:__subpackages__",
+        "//vendor:__subpackages__",
     ],
 }

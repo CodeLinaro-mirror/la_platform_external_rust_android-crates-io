@@ -5,7 +5,11 @@
     "libopenssl_sys": "libbssl_sys"
   },
   "module_visibility": {
-    "libtokio_openssl": ["//system/software_defined_vehicle/middleware/sdv_comms:__subpackages__"]
+    "libtokio_openssl": [
+      "//system/software_defined_vehicle/middleware/sdv_comms:__subpackages__",
+      // TODO(b/564404965): Remove this once SDV experimental repo usage is migrated
+      "//vendor:__subpackages__"
+    ]
   },
   "min_sdk_version": "29"
 }
