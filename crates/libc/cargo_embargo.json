@@ -42,5 +42,6 @@
       }
     }
   ],
+  "native_bridge_supported": true,
   "ota_recovery_ramdisk_available": true
 }
