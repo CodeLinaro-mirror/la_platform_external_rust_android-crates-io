@@ -351,6 +351,55 @@ async fn not_found() {
     assert!(body.is_empty());
 }
 
+#[tokio::test]
+async fn try_call_returns_not_found_error() {
+    let mut svc = ServeDir::new(REPO_ROOT);
+
+    let req = Request::builder()
+        .uri("/not-found")
+        .body(Body::empty())
+        .unwrap();
+    let err = match svc.try_call(req).await {
+        Ok(_) => panic!("expected a missing file to return an error"),
+        Err(err) => err,
+    };
+
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+}
+
+#[tokio::test]
+async fn try_call_uses_fallback_for_not_found_error() {
+    async fn fallback<B>(_: Request<B>) -> Result<Response<Body>, Infallible> {
+        Ok(Response::new(Body::from("fallback")))
+    }
+
+    let mut svc = ServeDir::new(REPO_ROOT).fallback(service_fn(fallback));
+    let req = Request::builder()
+        .uri("/not-found")
+        .body(Body::empty())
+        .unwrap();
+    let res = svc.try_call(req).await.unwrap();
+
+    assert_eq!(body_into_text(res.into_body()).await, "fallback");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn try_call_returns_not_a_directory_error() {
+    let mut svc = ServeDir::new(TEST_FILES_DIR);
+
+    let req = Request::builder()
+        .uri("/index.html/some_file")
+        .body(Body::empty())
+        .unwrap();
+    let err = match svc.try_call(req).await {
+        Ok(_) => panic!("expected a non-directory path component to return an error"),
+        Err(err) => err,
+    };
+
+    assert_eq!(err.raw_os_error(), Some(20));
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn not_found_when_not_a_directory() {
@@ -445,6 +494,32 @@ async fn redirect_to_trailing_slash_on_dir() {
 
     let location = &res.headers()[http::header::LOCATION];
     assert_eq!(location, "/src/");
+}
+
+#[tokio::test]
+async fn serve_directory_index_without_trailing_slash_redirect() {
+    let svc = ServeDir::new(TEST_FILES_DIR).redirect_to_trailing_slash(false);
+
+    let req = Request::builder().uri("/foo").body(Body::empty()).unwrap();
+    let res = svc.oneshot(req).await.unwrap();
+
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(res.headers().get(header::LOCATION).is_none());
+    assert_eq!(res.headers()[header::CONTENT_TYPE], "text/html");
+    let body = body_into_text(res.into_body()).await;
+    assert_eq!(body, "<b>HTML!</b>\n");
+}
+
+#[tokio::test]
+async fn no_trailing_slash_redirect_still_respects_disabled_directory_indexes() {
+    let svc = ServeDir::new(TEST_FILES_DIR)
+        .append_index_html_on_directories(false)
+        .redirect_to_trailing_slash(false);
+
+    let req = Request::builder().uri("/foo").body(Body::empty()).unwrap();
+    let res = svc.oneshot(req).await.unwrap();
+
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -663,7 +738,10 @@ async fn read_partial_errs_on_garbage_header() {
     assert_eq!(
         res.headers()["content-range"],
         &format!("bytes */{}", file_contents.len())
-    )
+    );
+
+    let body = body_into_text(res.into_body()).await;
+    assert!(body.is_empty());
 }
 
 #[tokio::test]
@@ -681,6 +759,142 @@ async fn read_partial_errs_on_bad_range() {
         res.headers()["content-range"],
         &format!("bytes */{}", file_contents.len())
     )
+}
+
+#[tokio::test]
+async fn multipart_range_can_be_ignored() {
+    let svc = ServeDir::new(REPO_ROOT).ignore_multi_range_requests(true);
+    let req = Request::builder()
+        .uri("/README.md")
+        .header("Range", "bytes=0-0,2-2")
+        .body(Body::empty())
+        .unwrap();
+    let res = svc.oneshot(req).await.unwrap();
+
+    let file_contents = std::fs::read(README_PATH).unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers()["content-length"],
+        file_contents.len().to_string()
+    );
+    assert!(res.headers().get("content-range").is_none());
+    assert_eq!(to_bytes(res.into_body()).await.unwrap(), file_contents);
+}
+
+#[tokio::test]
+async fn multipart_range_ignore_is_consistent_for_head() {
+    let svc = ServeDir::new(REPO_ROOT).ignore_multi_range_requests(true);
+    let req = Request::builder()
+        .method(Method::HEAD)
+        .uri("/README.md")
+        .header("Range", "bytes=0-0,2-2")
+        .body(Body::empty())
+        .unwrap();
+    let res = svc.oneshot(req).await.unwrap();
+
+    let file_contents = std::fs::read(README_PATH).unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers()["content-length"],
+        file_contents.len().to_string()
+    );
+    assert!(res.headers().get("content-range").is_none());
+    assert!(to_bytes(res.into_body()).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn multipart_range_ignore_applies_before_semantic_validation() {
+    for range in ["bytes=0-2,1-3", "bytes=3-1,5-6"] {
+        let svc = ServeDir::new(REPO_ROOT).ignore_multi_range_requests(true);
+        let req = Request::builder()
+            .uri("/README.md")
+            .header("Range", range)
+            .body(Body::empty())
+            .unwrap();
+        let res = svc.oneshot(req).await.unwrap();
+
+        assert_eq!(res.status(), StatusCode::OK, "range: {range}");
+        assert!(res.headers().get("content-range").is_none());
+    }
+}
+
+#[tokio::test]
+async fn multipart_range_ignore_keeps_other_range_errors() {
+    for range in ["bad_format", "bytes=999999999-"] {
+        let svc = ServeDir::new(REPO_ROOT).ignore_multi_range_requests(true);
+        let req = Request::builder()
+            .uri("/README.md")
+            .header("Range", range)
+            .body(Body::empty())
+            .unwrap();
+        let res = svc.oneshot(req).await.unwrap();
+
+        assert_eq!(
+            res.status(),
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            "range: {range}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn multipart_range_valid_returns_multipart_error_body() {
+    let svc = ServeDir::new(REPO_ROOT);
+    let req = Request::builder()
+        .uri("/README.md")
+        .header("Range", "bytes=0-0,2-2")
+        .body(Body::empty())
+        .unwrap();
+    let res = svc.oneshot(req).await.unwrap();
+
+    assert_eq!(res.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    let file_contents = std::fs::read(README_PATH).unwrap();
+    assert_eq!(
+        res.headers()["content-range"],
+        &format!("bytes */{}", file_contents.len())
+    );
+    assert!(res.headers().get(header::CONTENT_TYPE).is_none());
+    assert!(res.headers().get(header::CONTENT_ENCODING).is_none());
+
+    let body = body_into_text(res.into_body()).await;
+    assert_eq!(body, "Cannot serve multipart range requests");
+}
+
+#[tokio::test]
+async fn range_error_does_not_keep_precompressed_representation_headers() {
+    let svc = ServeDir::new(TEST_FILES_DIR).precompressed_gzip();
+    let req = Request::builder()
+        .uri("/precompressed.txt")
+        .header(header::ACCEPT_ENCODING, "gzip")
+        .header(header::RANGE, "bad_format")
+        .body(Body::empty())
+        .unwrap();
+    let res = svc.oneshot(req).await.unwrap();
+
+    assert_eq!(res.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    assert!(res.headers().get(header::CONTENT_TYPE).is_none());
+    assert!(res.headers().get(header::CONTENT_ENCODING).is_none());
+}
+
+#[tokio::test]
+async fn multipart_range_overlap_returns_multipart_error_body() {
+    let svc = ServeDir::new(REPO_ROOT);
+    let req = Request::builder()
+        .uri("/README.md")
+        .header("Range", "bytes=0-2,1-3")
+        .body(Body::empty())
+        .unwrap();
+    let res = svc.oneshot(req).await.unwrap();
+
+    assert_eq!(res.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    let file_contents = std::fs::read(README_PATH).unwrap();
+    assert_eq!(
+        res.headers()["content-range"],
+        &format!("bytes */{}", file_contents.len())
+    );
+
+    let body = body_into_text(res.into_body()).await;
+    assert_eq!(body, "Cannot serve multipart range requests");
 }
 
 #[tokio::test]
@@ -1143,6 +1357,7 @@ fn test_build_and_validate_path_reserved_dos_names() {
 
     let variant = ServeVariant::Directory {
         append_index_html_on_directories: true,
+        redirect_to_trailing_slash: true,
         html_as_default_extension: false,
     };
     let base = Path::new("/base");
@@ -1759,6 +1974,8 @@ mod memory_backend {
     struct MemBackend {
         files: Arc<HashMap<PathBuf, Vec<u8>>>,
         dirs: Arc<Vec<PathBuf>>,
+        open_error: Option<io::ErrorKind>,
+        metadata_error: Option<io::ErrorKind>,
     }
 
     impl MemBackend {
@@ -1766,6 +1983,8 @@ mod memory_backend {
             Self {
                 files: Arc::new(HashMap::new()),
                 dirs: Arc::new(Vec::new()),
+                open_error: None,
+                metadata_error: None,
             }
         }
 
@@ -1780,6 +1999,16 @@ mod memory_backend {
             Arc::get_mut(&mut self.dirs).unwrap().push(path.into());
             self
         }
+
+        fn with_open_error(mut self, error: io::ErrorKind) -> Self {
+            self.open_error = Some(error);
+            self
+        }
+
+        fn with_metadata_error(mut self, error: io::ErrorKind) -> Self {
+            self.metadata_error = Some(error);
+            self
+        }
     }
 
     impl Backend for MemBackend {
@@ -1790,7 +2019,11 @@ mod memory_backend {
 
         fn open(&self, path: PathBuf) -> Self::OpenFuture {
             let files = self.files.clone();
+            let error = self.open_error;
             Box::pin(async move {
+                if let Some(error) = error {
+                    return Err(io::Error::new(error, "open failed"));
+                }
                 match files.get(&path) {
                     Some(data) => Ok(MemFile {
                         meta: MemMetadata {
@@ -1808,7 +2041,11 @@ mod memory_backend {
         fn metadata(&self, path: PathBuf) -> Self::MetadataFuture {
             let files = self.files.clone();
             let dirs = self.dirs.clone();
+            let error = self.metadata_error;
             Box::pin(async move {
+                if let Some(error) = error {
+                    return Err(io::Error::new(error, "metadata failed"));
+                }
                 if dirs.contains(&path) {
                     return Ok(MemMetadata {
                         is_dir: true,
@@ -1860,6 +2097,39 @@ mod memory_backend {
         let res = svc.oneshot(req).await.unwrap();
 
         assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn unexpected_open_error_returns_internal_server_error() {
+        let backend = MemBackend::new().with_open_error(io::ErrorKind::Other);
+
+        let svc = ServeDir::with_backend("assets", backend);
+        let req = Request::builder()
+            .uri("/broken.txt")
+            .body(Body::empty())
+            .unwrap();
+        let res = svc.oneshot(req).await.unwrap();
+
+        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn try_call_returns_metadata_error() {
+        let backend = MemBackend::new()
+            .with_file("./assets/hello.txt", "Hello, world!")
+            .with_metadata_error(io::ErrorKind::PermissionDenied);
+
+        let mut svc = ServeDir::with_backend("assets", backend);
+        let req = Request::builder()
+            .uri("/hello.txt")
+            .body(Body::empty())
+            .unwrap();
+        let err = match svc.try_call(req).await {
+            Ok(_) => panic!("expected a metadata error"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
     }
 
     #[tokio::test]

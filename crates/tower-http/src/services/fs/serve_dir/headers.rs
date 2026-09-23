@@ -55,7 +55,7 @@ pub(super) struct IfNoneMatch(HeaderValue);
 impl IfNoneMatch {
     pub(super) fn from_header_value(value: &HeaderValue) -> Option<Self> {
         // Reject empty values
-        if value.as_bytes().is_empty() {
+        if value.is_empty() {
             return None;
         }
         Some(IfNoneMatch(value.clone()))
@@ -161,10 +161,9 @@ impl IfModifiedSince {
 
     /// Convert a header value into a IfModifiedSince. Invalid values are silently ignored
     pub(super) fn from_header_value(value: &HeaderValue) -> Option<IfModifiedSince> {
-        std::str::from_utf8(value.as_bytes())
-            .ok()
-            .and_then(|value| httpdate::parse_http_date(value).ok())
-            .map(|time| IfModifiedSince(time.into()))
+        let value = value.to_str().ok()?;
+        let date = value.parse().ok()?;
+        Some(IfModifiedSince(date))
     }
 }
 
@@ -178,10 +177,9 @@ impl IfUnmodifiedSince {
 
     /// Convert a header value into a IfUnmodifiedSince. Invalid values are silently ignored
     pub(super) fn from_header_value(value: &HeaderValue) -> Option<IfUnmodifiedSince> {
-        std::str::from_utf8(value.as_bytes())
-            .ok()
-            .and_then(|value| httpdate::parse_http_date(value).ok())
-            .map(|time| IfUnmodifiedSince(time.into()))
+        let value = value.to_str().ok()?;
+        let date = value.parse().ok()?;
+        Some(IfUnmodifiedSince(date))
     }
 }
 
