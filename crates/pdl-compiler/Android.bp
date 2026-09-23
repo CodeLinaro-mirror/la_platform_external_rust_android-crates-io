@@ -86,11 +86,12 @@ genrule_defaults {
     cmd: "$(location :pdlc) --output-format rust $(in) > $(out)",
     tools: [":pdlc"],
     defaults_visibility: [
-        "//system/nfc:__subpackages__",
         "//external/rust/pica",
+        "//hardware/interfaces/bluetooth/bluetooth_hal/rust:__subpackages__",
         "//packages/modules/Bluetooth:__subpackages__",
         "//packages/modules/Nfc:__subpackages__",
         "//packages/modules/Uwb:__subpackages__",
+        "//system/nfc:__subpackages__",
         "//tools/netsim:__subpackages__",
         "//tools/rootcanal:__subpackages__",
         "//vendor:__subpackages__",
