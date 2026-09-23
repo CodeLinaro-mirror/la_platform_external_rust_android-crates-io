@@ -11,11 +11,12 @@
 
 [package]
 edition = "2021"
-rust-version = "1.66"
+rust-version = "1.70"
 name = "drm-ffi"
-version = "0.9.0"
+version = "0.9.1"
 authors = ["Tyler Slabinski <tslabinski@slabity.net>"]
 build = false
+autolib = false
 autobins = false
 autoexamples = false
 autotests = false
@@ -25,15 +26,15 @@ readme = false
 license = "MIT"
 repository = "https://github.com/Smithay/drm-rs"
 
+[features]
+use_bindgen = ["drm-sys/use_bindgen"]
+
 [lib]
 name = "drm_ffi"
 path = "src/lib.rs"
 
 [dependencies.drm-sys]
-version = "0.8.0"
+version = "0.8"
 
 [dependencies.rustix]
-version = "1.0.7"
-
-[features]
-use_bindgen = ["drm-sys/use_bindgen"]
+version = "^1"
