@@ -3333,12 +3333,12 @@ dependencies = [
 
 [[package]]
 name = "drm-ffi"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8e41459d99a9b529845f6d2c909eb9adf3b6d2f82635ae40be8de0601726e8b"
+checksum = "51a91c9b32ac4e8105dec255e849e0d66e27d7c34d184364fb93e469db08f690"
 dependencies = [
  "drm-sys",
- "rustix 0.38.44",
+ "rustix 1.1.4",
 ]
 
 [[package]]
@@ -8635,7 +8635,7 @@ version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "430988f137a23121407b362bf10b09df302ed5092ffeb9af90a549edcc849115"
 dependencies = [
- "bitflags 2.13.1",
+ "bitflags 2.13.2",
  "libc 0.2.189",
  "mach2",
  "windows-sys 0.61.2",
