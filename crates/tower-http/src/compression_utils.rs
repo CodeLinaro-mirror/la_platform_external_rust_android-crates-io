@@ -238,9 +238,27 @@ where
         // poll any remaining frames, such as trailers
         let body = M::get_pin_mut(this.read).get_pin_mut().get_pin_mut();
         match ready!(body.poll_frame(cx)) {
-            Some(Ok(frame)) => Poll::Ready(Some(Ok(
+            Some(Ok(frame)) if frame.is_trailers() => Poll::Ready(Some(Ok(
                 frame.map_data(|mut data| data.copy_to_bytes(data.remaining()))
             ))),
+            Some(Ok(frame)) => match frame.into_data() {
+                // Payload after the decompressor reported end-of-stream means
+                // the body and the compressed stream disagree about where the
+                // content ends.
+                Ok(data) if data.has_remaining() => Poll::Ready(Some(Err(
+                    "there are extra bytes after body has been decompressed".into(),
+                ))),
+                // An empty data frame carries nothing, but it is not the end of
+                // the body: trailers may still follow it. Ending the stream here
+                // would strand them, and `Body`'s contract forbids polling once
+                // `None` has been returned, so they could never be recovered.
+                Ok(mut data) => {
+                    Poll::Ready(Some(Ok(Frame::data(data.copy_to_bytes(data.remaining())))))
+                }
+                Err(frame) => Poll::Ready(Some(Ok(
+                    frame.map_data(|mut data| data.copy_to_bytes(data.remaining()))
+                ))),
+            },
             Some(Err(err)) => Poll::Ready(Some(Err(err.into()))),
             None => Poll::Ready(None),
         }

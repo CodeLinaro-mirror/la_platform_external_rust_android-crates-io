@@ -7,7 +7,6 @@ use crate::content_encoding::{Encoding, QValue};
 use bytes::Bytes;
 use http::{header, HeaderValue, Method, Request, Uri};
 use http_body_util::Empty;
-use http_range_header::RangeUnsatisfiableError;
 use std::{
     ffi::OsStr,
     io::{self, ErrorKind, SeekFrom},
@@ -31,12 +30,17 @@ pub(super) enum OpenFileOutput {
     InvalidFilename,
 }
 
+pub(super) enum RangeError {
+    Unsatisfiable,
+    MultipleRangesNotSupported,
+}
+
 pub(super) struct FileOpened {
     pub(super) extent: FileRequestExtent,
     pub(super) chunk_size: usize,
     pub(super) mime_header_value: HeaderValue,
     pub(super) maybe_encoding: Option<Encoding>,
-    pub(super) maybe_range: Option<Result<Vec<RangeInclusive<u64>>, RangeUnsatisfiableError>>,
+    pub(super) maybe_range: Option<Result<RangeInclusive<u64>, RangeError>>,
     pub(super) last_modified: Option<LastModified>,
     pub(super) precompression_configured: bool,
     pub(super) etag: Option<ETag>,
@@ -55,6 +59,7 @@ pub(super) struct OpenFileRequest<B> {
     pub(super) negotiated_encodings: Vec<(Encoding, QValue)>,
     pub(super) range_header: Option<String>,
     pub(super) buf_chunk_size: usize,
+    pub(super) ignore_multi_range_requests: bool,
     pub(super) precompression_configured: bool,
     pub(super) backend: B,
 }
@@ -70,6 +75,7 @@ pub(super) async fn open_file<B: Backend>(
         negotiated_encodings,
         range_header,
         buf_chunk_size,
+        ignore_multi_range_requests,
         precompression_configured,
         backend,
     } = request;
@@ -95,6 +101,7 @@ pub(super) async fn open_file<B: Backend>(
     let mime = match variant {
         ServeVariant::Directory {
             append_index_html_on_directories,
+            redirect_to_trailing_slash,
             html_as_default_extension,
         } => {
             // Might already at this point know a redirect or not found result should be
@@ -105,10 +112,11 @@ pub(super) async fn open_file<B: Backend>(
                 &mut path_to_file,
                 req.uri(),
                 append_index_html_on_directories,
+                redirect_to_trailing_slash,
                 html_as_default_extension,
                 &backend,
             )
-            .await
+            .await?
             {
                 return Ok(output);
             }
@@ -148,7 +156,11 @@ pub(super) async fn open_file<B: Backend>(
             return Ok(output);
         }
 
-        let maybe_range = try_parse_range(range_header.as_deref(), meta.len());
+        let maybe_range = try_parse_range(
+            range_header.as_deref(),
+            meta.len(),
+            ignore_multi_range_requests,
+        );
 
         Ok(OpenFileOutput::FileOpened(Box::new(FileOpened {
             extent: FileRequestExtent::Head(meta.len()),
@@ -194,13 +206,10 @@ pub(super) async fn open_file<B: Backend>(
         }
 
         let size = meta.len();
-        let maybe_range = try_parse_range(range_header.as_deref(), size);
-        if let Some(Ok(ranges)) = maybe_range.as_ref() {
-            // if there is any other amount of ranges than 1 we'll return an
-            // unsatisfiable later as there isn't yet support for multipart ranges
-            if ranges.len() == 1 {
-                file.seek(SeekFrom::Start(*ranges[0].start())).await?;
-            }
+        let maybe_range =
+            try_parse_range(range_header.as_deref(), size, ignore_multi_range_requests);
+        if let Some(Ok(range)) = maybe_range.as_ref() {
+            file.seek(SeekFrom::Start(*range.start())).await?;
         }
 
         Ok(OpenFileOutput::FileOpened(Box::new(FileOpened {
@@ -403,60 +412,82 @@ async fn maybe_redirect_or_append_path<B: Backend>(
     path_to_file: &mut PathBuf,
     uri: &Uri,
     append_index_html_on_directories: bool,
+    redirect_to_trailing_slash: bool,
     html_as_default_extension: bool,
     backend: &B,
-) -> Option<OpenFileOutput> {
+) -> io::Result<Option<OpenFileOutput>> {
     let uri_path = uri.path();
 
-    let is_directory = is_dir(path_to_file, backend).await;
+    let is_directory = is_dir(path_to_file, backend).await?;
 
     if uri_path.ends_with('/') && uri_path != "/" && is_directory != Some(true) {
-        return Some(OpenFileOutput::FileNotFound);
+        return Ok(Some(OpenFileOutput::FileNotFound));
     }
 
     // If the path has no extension and doesn't exist as a file, try appending .html
     if html_as_default_extension && is_directory.is_none() && path_to_file.extension().is_none() {
         path_to_file.set_extension("html");
-        return None;
+        return Ok(None);
     }
 
     if is_directory != Some(true) {
-        return None;
+        return Ok(None);
     }
 
     if !append_index_html_on_directories {
-        return Some(OpenFileOutput::FileNotFound);
+        return Ok(Some(OpenFileOutput::FileNotFound));
     }
 
-    if uri_path.ends_with('/') {
+    if uri_path.ends_with('/') || !redirect_to_trailing_slash {
         path_to_file.push("index.html");
-        None
+        Ok(None)
     } else {
         let uri = match append_slash_on_path(uri.clone(), redirect_path_prefix) {
             Ok(uri) => uri,
-            Err(err) => return Some(err),
+            Err(err) => return Ok(Some(err)),
         };
         let location = HeaderValue::from_str(&uri.to_string()).unwrap();
-        Some(OpenFileOutput::Redirect { location })
+        Ok(Some(OpenFileOutput::Redirect { location }))
     }
 }
 
 fn try_parse_range(
     maybe_range_ref: Option<&str>,
     file_size: u64,
-) -> Option<Result<Vec<RangeInclusive<u64>>, RangeUnsatisfiableError>> {
-    maybe_range_ref.map(|header_value| {
-        http_range_header::parse_range_header(header_value)
-            .and_then(|first_pass| first_pass.validate(file_size))
-    })
+    ignore_multi_range_requests: bool,
+) -> Option<Result<RangeInclusive<u64>, RangeError>> {
+    let header_value = maybe_range_ref?;
+    let parsed = match http_range_header::parse_range_header(header_value) {
+        Ok(parsed) => parsed,
+        Err(_) => return Some(Err(RangeError::Unsatisfiable)),
+    };
+
+    if parsed.ranges.len() > 1 {
+        // ServeDir/ServeFile do not support multipart responses. Optionally ignore
+        // the Range header before validate() runs semantic and overlap checks.
+        return if ignore_multi_range_requests {
+            None
+        } else {
+            Some(Err(RangeError::MultipleRangesNotSupported))
+        };
+    }
+
+    Some(
+        parsed
+            .validate(file_size)
+            .map_err(|_| RangeError::Unsatisfiable)
+            .and_then(|mut ranges| ranges.pop().ok_or(RangeError::Unsatisfiable)),
+    )
 }
 
-async fn is_dir<B: Backend>(path_to_file: &Path, backend: &B) -> Option<bool> {
-    backend
-        .metadata(path_to_file.to_owned())
-        .await
-        .ok()
-        .map(|meta_data| meta_data.is_dir())
+async fn is_dir<B: Backend>(path_to_file: &Path, backend: &B) -> io::Result<Option<bool>> {
+    match backend.metadata(path_to_file.to_owned()).await {
+        Ok(metadata) => Ok(Some(metadata.is_dir())),
+        Err(err) if err.kind() == io::ErrorKind::NotFound || is_invalid_filename_error(&err) => {
+            Ok(None)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 fn append_slash_on_path(uri: Uri, redirect_path_prefix: &str) -> Result<Uri, OpenFileOutput> {
