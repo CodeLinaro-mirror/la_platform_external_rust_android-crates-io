@@ -23,5 +23,6 @@
       }
     }
   ],
+  "native_bridge_supported": true,
   "recovery_available": true
 }

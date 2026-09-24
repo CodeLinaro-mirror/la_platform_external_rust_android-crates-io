@@ -1,5 +1,6 @@
 {
   "recovery_available": true,
+  "native_bridge_supported": true,
   "min_sdk_version": "29",
   "module_blocklist": ["libproc_static_assertions"],
   "run_cargo": false,
