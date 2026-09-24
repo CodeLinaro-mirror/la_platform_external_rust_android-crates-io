@@ -1,10 +1,10 @@
-diff --git b/rules.mk a/rules.mk
-index 078c0bb..3ccd69f 100644
---- b/rules.mk
-+++ a/rules.mk
-@@ -14,12 +14,14 @@
- 	--cfg 'feature="alloc"'
- 
+diff --git a/rules.mk b/rules.mk
+index f15a8d6bc..ac00f110f 100644
+--- a/rules.mk
++++ b/rules.mk
+@@ -11,12 +11,14 @@ MODULE_SRCS := $(LOCAL_DIR)/src/lib.rs
+ MODULE_ADD_IMPLICIT_DEPS := false
+ MODULE_RUST_EDITION := 2021
  MODULE_LIBRARY_DEPS := \
 +	trusty/user/base/lib/liballoc-rust \
  	$(call FIND_CRATE,bitflags) \

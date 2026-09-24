@@ -18,7 +18,7 @@ rust_library {
     host_supported: true,
     crate_name: "octets",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.3.6",
+    cargo_pkg_version: "0.3.7",
     crate_root: "src/lib.rs",
     edition: "2021",
     features: ["huffman_hpack"],
@@ -36,7 +36,7 @@ rust_test {
     host_supported: true,
     crate_name: "octets",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.3.6",
+    cargo_pkg_version: "0.3.7",
     crate_root: "src/lib.rs",
     test_suites: ["general-tests"],
     auto_gen_config: true,
@@ -45,4 +45,38 @@ rust_test {
     },
     edition: "2021",
     features: ["huffman_hpack"],
+}
+
+rust_test {
+    name: "octets_test_tests_huffman",
+    host_supported: true,
+    crate_name: "huffman",
+    cargo_env_compat: true,
+    cargo_pkg_version: "0.3.7",
+    crate_root: "tests/huffman.rs",
+    test_suites: ["general-tests"],
+    auto_gen_config: true,
+    test_options: {
+        unit_test: true,
+    },
+    edition: "2021",
+    features: ["huffman_hpack"],
+    rustlibs: ["liboctets"],
+}
+
+rust_test {
+    name: "octets_test_tests_octets",
+    host_supported: true,
+    crate_name: "octets",
+    cargo_env_compat: true,
+    cargo_pkg_version: "0.3.7",
+    crate_root: "tests/octets.rs",
+    test_suites: ["general-tests"],
+    auto_gen_config: true,
+    test_options: {
+        unit_test: true,
+    },
+    edition: "2021",
+    features: ["huffman_hpack"],
+    rustlibs: ["liboctets"],
 }

@@ -28,5 +28,10 @@
     {
       "name": "crc32fast_test_src_lib"
     }
+  ],
+  "postsubmit": [
+    {
+      "name": "crc32fast_test_tests_exhaustive"
+    }
   ]
 }

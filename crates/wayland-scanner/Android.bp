@@ -17,7 +17,7 @@ rust_proc_macro {
     name: "libwayland_scanner",
     crate_name: "wayland_scanner",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.31.10",
+    cargo_pkg_version: "0.31.11",
     crate_root: "src/lib.rs",
     edition: "2021",
     rustlibs: [

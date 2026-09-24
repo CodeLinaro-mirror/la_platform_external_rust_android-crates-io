@@ -12,7 +12,8 @@
     "fs",
     "event",
     "process",
-    "time"
+    "time",
+    "termios"
   ],
   "min_sdk_version": "30",
   "extra_cfg": [

@@ -18,7 +18,7 @@ rust_library {
     host_supported: true,
     crate_name: "openssh_sftp_client",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.15.7",
+    cargo_pkg_version: "0.15.8",
     crate_root: "src/lib.rs",
     edition: "2021",
     rustlibs: [

@@ -10,9 +10,6 @@ MODULE_RUST_CRATE_TYPES := rlib
 MODULE_SRCS := $(LOCAL_DIR)/src/lib.rs
 MODULE_ADD_IMPLICIT_DEPS := false
 MODULE_RUST_EDITION := 2021
-MODULE_RUSTFLAGS += \
-	--cfg 'feature="alloc"'
-
 MODULE_LIBRARY_DEPS := \
 	trusty/user/base/lib/liballoc-rust \
 	$(call FIND_CRATE,bitflags) \

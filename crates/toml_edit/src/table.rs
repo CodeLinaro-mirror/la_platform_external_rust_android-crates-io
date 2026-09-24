@@ -488,7 +488,11 @@ impl std::fmt::Display for Table {
         let children = self.get_values();
         // print table body
         for (key_path, value) in children {
-            crate::encode::encode_key_path_ref(&key_path, f, None, DEFAULT_KEY_DECOR)?;
+            let leaf_decor = key_path
+                .last()
+                .expect("always at least one key")
+                .leaf_decor();
+            crate::encode::encode_key_path(&key_path, f, None, DEFAULT_KEY_DECOR, leaf_decor)?;
             write!(f, "=")?;
             crate::encode::encode_value(value, f, None, DEFAULT_VALUE_DECOR)?;
             writeln!(f)?;

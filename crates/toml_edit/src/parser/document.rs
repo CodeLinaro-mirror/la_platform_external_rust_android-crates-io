@@ -346,7 +346,7 @@ impl State {
         let _scope = TraceScope::new("document::finish_table");
         let mut prev_table = std::mem::take(&mut self.current_table);
         if let Some(header) = self.current_header.take() {
-            let Some(key) = &header.key else {
+            let Some(key) = header.key else {
                 return;
             };
             prev_table.span = Some(header.span.start()..header.span.end());
@@ -363,8 +363,10 @@ impl State {
                 anstyle::AnsiColor::Blue.on_default(),
             );
             if header.is_array {
+                let key_span = get_key_span(&key).expect("all keys have spans");
                 let entry = parent_table
-                    .entry_format(key)
+                    .items
+                    .entry(key)
                     .or_insert(Item::ArrayOfTables(ArrayOfTables::new()));
                 let Some(array) = entry.as_array_of_tables_mut() else {
                     #[cfg(feature = "debug")]
@@ -372,7 +374,6 @@ impl State {
                         "is_array_of_tables=false",
                         anstyle::AnsiColor::Red.on_default(),
                     );
-                    let key_span = get_key_span(key).expect("all keys have spans");
                     let old_span = entry.span().unwrap_or_default();
                     let old_span = toml_parser::Span::new_unchecked(old_span.start, old_span.end);
                     errors.report_error(
@@ -393,7 +394,7 @@ impl State {
                 };
                 array.span = span;
             } else {
-                let existing = parent_table.insert_formatted(key, Item::Table(prev_table));
+                let existing = parent_table.items.insert(key, Item::Table(prev_table));
                 debug_assert!(existing.is_none());
             }
         } else {

@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.85.1"
 name = "uefi-raw"
-version = "0.15.1"
+version = "0.16.0"
 authors = ["The Rust OSDev team"]
 build = false
 autolib = false

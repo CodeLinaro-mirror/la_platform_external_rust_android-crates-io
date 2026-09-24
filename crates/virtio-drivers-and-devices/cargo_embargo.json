@@ -1,7 +1,5 @@
 {
-  "features": [
-    "alloc"
-  ],
+  "features": [],
   "package": {
     "virtio-drivers-and-devices": {
       "force_rlib": true,

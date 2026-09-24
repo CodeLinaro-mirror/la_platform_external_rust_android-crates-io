@@ -1,1 +1,3 @@
 /updates-tried.json
+!crates/*/out/
+!crates/*/out/**

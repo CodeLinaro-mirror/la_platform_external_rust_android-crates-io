@@ -5,6 +5,68 @@ This project adheres to [Semantic Versioning](http://semver.org/).
 This file follows the convention described at
 [Keep a Changelog](http://keepachangelog.com/en/1.0.0/).
 
+## [5.0.0] - 2026-08-22
+### Breaking Changes
+- **`v2020` now requires even `min_size`, `avg_size`, and `max_size`.** The
+  "rolling two bytes each time" scan tests candidates in byte pairs starting
+  at `min_size / 2`, `avg_size / 2`, and `max_size / 2`; an odd value
+  truncates when halved and silently shifts those boundaries by one byte
+  (issue #52). For example `min_size = 65` let the scan return a chunk as
+  short as 64 bytes, violating the documented minimum. `FastCDC`,
+  `StreamCDC`, and `AsyncStreamCDC` now `debug_assert` that all three sizes
+  are even, as does the underlying `cut`/`cut_gear` scan itself. Callers
+  using an odd size such as the `max_size = 65535` from prior examples must
+  switch to an even value (e.g. `65534`); the built-in examples and doctests
+  have been updated accordingly. Release builds are unaffected by the
+  assertion (consistent with the existing `MINIMUM_MIN`/`AVERAGE_MIN`/etc.
+  range checks), but odd sizes remain unsupported either way. (#52)
+### Fixed
+- **`v2020` forced/tail chunks could report a stale hash.** The leftover at
+  the very end of a source is not required to be even (unlike `min_size`/
+  `avg_size`/`max_size`, a file's length isn't under the caller's control),
+  and the scan never folded that trailing odd byte into the hash before
+  forcing a cut, so the returned fingerprint silently omitted the chunk's
+  last byte. The trailing byte is now folded into the hash (matching what a
+  byte-at-a-time scan would accumulate) without being tested as its own
+  boundary candidate. Cut points for even-sized parameters are unchanged;
+  only the hash of a chunk ending in a natural odd-length leftover changes.
+  (#52)
+- **`Iterator::size_hint` upper bound could violate the trait contract.** In
+  `ronomon`, `v2016`, and `v2020`, a non-empty tail shorter than `min_size`
+  still yields one final chunk, but `size_hint` computed its upper bound as
+  `remaining / min_size`, which floors to `0` in that case — understating the
+  actual number of items left. Now uses `remaining.div_ceil(min_size)` for the
+  upper bound and reports a lower bound of `1` while data remains. Chunk
+  boundaries are unchanged. (#50)
+- **`v2020::AsyncStreamCDC` and the `v2020_cut` example could select different
+  masks than `FastCDC`/`StreamCDC` for the same `avg_size`.** The sync
+  constructors round `avg_size.log2()` to the nearest bit (so e.g. `12288`
+  selects the same bucket as `16384`), but `AsyncStreamCDC` and the example
+  used `usize::ilog2`, which floors instead (selecting the `8192` bucket).
+  Both now go through a new shared `v2020::select_masks` function, so all
+  three front-ends pick identical masks for identical arguments.
+  **Boundary change:** Only affects `AsyncStreamCDC` output and the
+  `v2020_cut` example's output, and only for non-power-of-two `avg_size`
+  values; `FastCDC` and `StreamCDC` cut points are unchanged. (#51)
+### Performance
+- **`v2020::cut_gear` inner loop: restored array-typed GEAR lookups.** The 4.0.0
+  change from `&[u64; 256]` to `&[u64]` reintroduced a `panic_bounds_check` on
+  every GEAR table lookup in the hot scan (4 of them per loop iteration).
+  `cut_gear` now converts the tables to `&[u64; 256]` once via `try_into`, which
+  the compiler can prove in-bounds for a `u8`-derived index. Cut points and
+  hashes are unchanged (the existing fixture tests pin them); emitted asm drops
+  from 8 to 4 `panic_bounds_check` sites in `cut_gear`, and an interleaved A/B
+  measured ~7–14% throughput on random/text/zeros across chunk sizes (M1 Pro and
+  a dedicated-CPU x86 VM). The `&[u64]`/`Cow` public signature is unchanged.
+### Added
+- **`v2020::FastCDC::rechunk`** — re-points an existing `FastCDC` at a new source
+  and resets iteration, reusing the already-computed normalization masks and gear
+  tables. The cheap way to chunk many in-memory buffers with identical parameters:
+  avoids recomputing masks and (for a non-zero seed) re-allocating the gear tables
+  on every `FastCDC::new`. The iterator already yields each chunk's offset/length
+  without copying, so callers needing the chunk bytes can slice the source. Cut
+  points are identical to a freshly constructed `FastCDC`.
+
 ## [4.0.1] - 2026-04-26
 ### Fixed
 - Restore rounded-log mask selection. The 4.0.0 cleanup replaced the private
@@ -36,7 +98,7 @@ Many changes suggested by Claude Code that seem worth making despite breaking th
 
 ## [3.2.1] - 2025-04-17
 ### Fixed
-- bits0rcerer: make `get_gear_with_seed()` public so it is usuable outside of
+- bits0rcerer: make `get_gear_with_seed()` public so it is usable outside of
   the `v2020` module.
 - bits0rcerer: pass GEAR tables by reference to avoid copying.
 - Restore the original `cut()` function and add `cut_gear()` with the references
@@ -76,8 +138,8 @@ Many changes suggested by Claude Code that seem worth making despite breaking th
   What was `fastcdc::FastCDC::new()` is now `fastcdc::ronomon::FastCDC::new()`.
 - flokli: remove `mut` from `&self` in `cut()` as it does not need to be mutable.
 ### Added
-- Canonical implementation of FastCDC from 2016 paper in `v2016` module.
-- Canonical implementation of FastCDC from 2020 paper in `v2020` module.
+- Implementation of FastCDC from 2016 paper in `v2016` module.
+- Implementation of FastCDC from 2020 paper in `v2020` module.
 - `Normalization` enum to set the normalized chunking for `v2016` and `v2020` chunkers.
 - `StreamCDC`, streaming version of `FastCDC`, in `v2016` and `v2020` modules.
 

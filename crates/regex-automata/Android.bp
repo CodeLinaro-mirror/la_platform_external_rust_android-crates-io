@@ -18,7 +18,7 @@ rust_library {
     host_supported: true,
     crate_name: "regex_automata",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.4.16",
+    cargo_pkg_version: "0.4.18",
     crate_root: "src/lib.rs",
     edition: "2021",
     features: [

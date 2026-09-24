@@ -34,6 +34,7 @@ const SIT: &str = "sit";
 const GRE: &str = "gre";
 const IP6GRE: &str = "ip6gre";
 const VTI: &str = "vti";
+const VTI6: &str = "vti6";
 const VRF: &str = "vrf";
 const GTP: &str = "gtp";
 const IPOIB: &str = "ipoib";
@@ -43,7 +44,21 @@ const MACSEC: &str = "macsec";
 const HSR: &str = "hsr";
 const GENEVE: &str = "geneve";
 const NETKIT: &str = "netkit";
+const VCAN: &str = "vcan";
 const VXCAN: &str = "vxcan";
+const AMT: &str = "amt";
+const BATADV: &str = "batadv";
+const BAREUDP: &str = "bareudp";
+const NETDEVSIM: &str = "netdevsim";
+const VIRT_WIFI: &str = "virt_wifi";
+const WWAN: &str = "wwan";
+const CAN: &str = "can";
+const DSA: &str = "dsa";
+const TEAM: &str = "team";
+const ERSPAN: &str = "erspan";
+const IP6ERSPAN: &str = "ip6erspan";
+const PFCP: &str = "pfcp";
+const RMNET: &str = "rmnet";
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[non_exhaustive]
@@ -195,6 +210,7 @@ pub enum InfoKind {
     GreTun,
     GreTun6,
     Vti,
+    Vti6,
     Vrf,
     Gtp,
     Ipoib,
@@ -204,7 +220,21 @@ pub enum InfoKind {
     Hsr,
     Geneve,
     Netkit,
+    Vcan,
     Vxcan,
+    Amt,
+    BatAdv,
+    BareUdp,
+    Netdevsim,
+    VirtWifi,
+    Wwan,
+    Can,
+    Dsa,
+    Team,
+    ErSpan,
+    Ip6ErSpan,
+    Pfcp,
+    RmNet,
     Other(String),
 }
 
@@ -235,6 +265,7 @@ impl std::fmt::Display for InfoKind {
                 Self::GreTun => GRE,
                 Self::GreTun6 => IP6GRE,
                 Self::Vti => VTI,
+                Self::Vti6 => VTI6,
                 Self::Vrf => VRF,
                 Self::Gtp => GTP,
                 Self::Ipoib => IPOIB,
@@ -244,7 +275,21 @@ impl std::fmt::Display for InfoKind {
                 Self::Hsr => HSR,
                 Self::Geneve => GENEVE,
                 Self::Netkit => NETKIT,
+                Self::Vcan => VCAN,
                 Self::Vxcan => VXCAN,
+                Self::Amt => AMT,
+                Self::BatAdv => BATADV,
+                Self::BareUdp => BAREUDP,
+                Self::Netdevsim => NETDEVSIM,
+                Self::VirtWifi => VIRT_WIFI,
+                Self::Wwan => WWAN,
+                Self::Can => CAN,
+                Self::Dsa => DSA,
+                Self::Team => TEAM,
+                Self::ErSpan => ERSPAN,
+                Self::Ip6ErSpan => IP6ERSPAN,
+                Self::Pfcp => PFCP,
+                Self::RmNet => RMNET,
                 Self::Other(s) => s.as_str(),
             }
         )
@@ -275,6 +320,7 @@ impl Nla for InfoKind {
             Self::GreTun => GRE.len(),
             Self::GreTun6 => IP6GRE.len(),
             Self::Vti => VTI.len(),
+            Self::Vti6 => VTI6.len(),
             Self::Vrf => VRF.len(),
             Self::Gtp => GTP.len(),
             Self::Ipoib => IPOIB.len(),
@@ -284,7 +330,21 @@ impl Nla for InfoKind {
             Self::Hsr => HSR.len(),
             Self::Geneve => GENEVE.len(),
             Self::Netkit => NETKIT.len(),
+            Self::Vcan => VCAN.len(),
             Self::Vxcan => VXCAN.len(),
+            Self::Amt => AMT.len(),
+            Self::BatAdv => BATADV.len(),
+            Self::BareUdp => BAREUDP.len(),
+            Self::Netdevsim => NETDEVSIM.len(),
+            Self::VirtWifi => VIRT_WIFI.len(),
+            Self::Wwan => WWAN.len(),
+            Self::Can => CAN.len(),
+            Self::Dsa => DSA.len(),
+            Self::Team => TEAM.len(),
+            Self::ErSpan => ERSPAN.len(),
+            Self::Ip6ErSpan => IP6ERSPAN.len(),
+            Self::Pfcp => PFCP.len(),
+            Self::RmNet => RMNET.len(),
             Self::Other(s) => s.len(),
         };
         len + 1
@@ -326,6 +386,7 @@ impl From<&str> for InfoKind {
             GRE => Self::GreTun,
             IP6GRE => Self::GreTun6,
             VTI => Self::Vti,
+            VTI6 => Self::Vti6,
             VRF => Self::Vrf,
             GTP => Self::Gtp,
             IPOIB => Self::Ipoib,
@@ -335,7 +396,21 @@ impl From<&str> for InfoKind {
             HSR => Self::Hsr,
             GENEVE => Self::Geneve,
             NETKIT => Self::Netkit,
+            VCAN => Self::Vcan,
             VXCAN => Self::Vxcan,
+            AMT => Self::Amt,
+            BATADV => Self::BatAdv,
+            BAREUDP => Self::BareUdp,
+            NETDEVSIM => Self::Netdevsim,
+            VIRT_WIFI => Self::VirtWifi,
+            WWAN => Self::Wwan,
+            CAN => Self::Can,
+            DSA => Self::Dsa,
+            TEAM => Self::Team,
+            ERSPAN => Self::ErSpan,
+            IP6ERSPAN => Self::Ip6ErSpan,
+            PFCP => Self::Pfcp,
+            RMNET => Self::RmNet,
             _ => Self::Other(s.to_owned()),
         }
     }

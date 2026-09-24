@@ -2,7 +2,7 @@
 // Copyright (c) 2023 Nathan Fiedler
 //
 
-//! This module implements the canonical FastCDC algorithm as described in the
+//! This module implements the FastCDC algorithm as described in the
 //! [paper](https://www.usenix.org/system/files/conference/atc16/atc16-paper-xia.pdf)
 //! by Wen Xia, et al., in 2016.
 //!
@@ -44,12 +44,20 @@ pub const MAXIMUM_MIN: usize = 1024;
 pub const MAXIMUM_MAX: usize = 16_777_216;
 
 ///
-/// Masks for each of the desired number of bits, where 0 through 5 are unused.
-/// The values for sizes 64 bytes through 128 kilo-bytes comes from the C
-/// reference implementation (found in the destor repository) while the extra
-/// values come from the restic-FastCDC repository. The FastCDC paper claims that
-/// the deduplication ratio is slightly improved when the mask bits are spread
-/// relatively evenly, hence these seemingly "magic" values.
+/// Cut-point test masks, one per target chunk-size bucket (indexed by
+/// `avg_size.log2().round()`, see the private `logarithm2` helper).
+///
+/// A candidate byte position is a valid cut point when `hash & mask == 0`;
+/// a mask's bit count sets the probability of that (~`2^-popcount(mask)`),
+/// which sets the expected distance to the next cut. Normalized chunking
+/// picks a stricter mask (`mask_s`, more bits) below `avg_size` and a
+/// looser one (`mask_l`, fewer bits) above it, biasing cut points toward
+/// the average. Values for 64 bytes through 128 KB come from the C
+/// reference implementation (destor repository); the rest come from
+/// restic-FastCDC. The FastCDC paper notes deduplication improves slightly
+/// when mask bits are spread evenly, hence these "magic" values.
+///
+/// Note that indices 0 through 5 are unused.
 ///
 pub const MASKS: [u64; 26] = [
     0,                  // padding
@@ -397,8 +405,9 @@ impl Iterator for FastCDC<'_> {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let upper_bound = self.remaining / self.min_size;
-        (1.min(upper_bound), Some(upper_bound))
+        let upper_bound = self.remaining.div_ceil(self.min_size);
+        let lower_bound = usize::from(self.remaining > 0);
+        (lower_bound, Some(upper_bound))
     }
 }
 
@@ -633,6 +642,21 @@ mod tests {
     use std::fs::{self, File};
 
     #[test]
+    fn test_logarithm2() {
+        // Powers of two: rounded and floored log2 agree.
+        assert_eq!(logarithm2(1024), 10);
+        assert_eq!(logarithm2(16384), 14);
+        assert_eq!(logarithm2(65536), 16);
+        // Non-powers of two: must round to nearest, not floor. These are the
+        // cases where usize::ilog2 would silently pick the wrong mask bucket
+        // (regression guard for the 4.0.0 -> 4.0.1 fix).
+        assert_eq!(logarithm2(1500), 11); // log2 ~ 10.55, rounds up
+        assert_eq!(logarithm2(12288), 14); // log2 ~ 13.585, rounds up
+        assert_eq!(logarithm2(24576), 15); // log2 ~ 14.585, rounds up
+        assert_eq!(logarithm2(1100), 10); // log2 ~ 10.103, rounds down
+    }
+
+    #[test]
     #[should_panic]
     fn test_minimum_too_low() {
         let array = [0u8; 1024];
@@ -703,6 +727,20 @@ mod tests {
         // assert that nothing more should be returned
         let (_, pos) = chunker.cut(cursor, 10240 - cursor);
         assert_eq!(pos, 10240);
+    }
+
+    #[test]
+    fn test_size_hint_short_tail() {
+        // A source shorter than min_size still yields exactly one chunk, so
+        // the upper bound must not be 0 while data remains (regression test
+        // for issue #50: size_hint violated the Iterator::size_hint contract).
+        let array = [0u8; 50];
+        let mut chunker = FastCDC::new(&array, 64, 256, 1024);
+        assert_eq!(chunker.size_hint(), (1, Some(1)));
+        let chunk = chunker.next().expect("one chunk expected");
+        assert_eq!(chunk.length, 50);
+        assert_eq!(chunker.size_hint(), (0, Some(0)));
+        assert_eq!(chunker.next(), None);
     }
 
     #[test]

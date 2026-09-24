@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.1
+
+### Bugfixes
+
+- Fixed build on AArch32 targets.
+- Refactored GICv3 (re)distributor save and restore to use regular functions
+  instead of macros to reduce generated binary size.
+
 ## 0.9.0
 
 ### Breaking changes

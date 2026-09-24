@@ -12,7 +12,7 @@
 [package]
 edition = "2024"
 name = "fastcdc"
-version = "4.0.1"
+version = "5.0.0"
 authors = ["Nathan Fiedler <nathanfiedler@fastmail.fm>"]
 build = false
 exclude = [
@@ -90,6 +90,11 @@ path = "examples/v2020.rs"
 name = "v2020_cut"
 path = "examples/v2020_cut.rs"
 
+[[bench]]
+name = "chunking"
+path = "benches/chunking.rs"
+harness = false
+
 [dependencies.async-stream]
 version = "0.3"
 optional = true
@@ -120,6 +125,9 @@ version = "1.4.3"
 version = "4.2.1"
 features = ["cargo"]
 
+[dev-dependencies.criterion]
+version = "0.8.2"
+
 [dev-dependencies.ctr]
 version = "0.10.0"
 
@@ -141,3 +149,8 @@ features = [
     "rt-multi-thread",
     "macros",
 ]
+
+[profile.bench]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

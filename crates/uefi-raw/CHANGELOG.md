@@ -1,8 +1,27 @@
 # uefi-raw - [Unreleased]
 
+
+# uefi-raw - v0.16.0 (2026-08-25)
+
 ## Added
+- Added the revision constants `BlockIoProtocol::{REVISION, REVISION_2,
+  REVISION_3}`.
+- Added `Boolean::is_true()` and  `Boolean::is_false()` for a quick conversion
+  of an EFI boolean to a Rust boolean.
 
 ## Changed
+- **Breaking**: `MemoryDescriptor` now has a new member to ensure correct
+  layout on all non-UEFI 32-bit targets.
+- **Breaking**: Corrected the `volatile` parameter of
+  `ShellProtocol::get_alias` from `Boolean` to `*mut Boolean`.
+- **Breaking**: The USB descriptor types in `protocol::usb` are now packed to
+  match their layout in the USB specification. `ConfigDescriptor` and
+  `EndpointDescriptor` previously had a too-large `size_of`.
+- **Breaking**: `HiiKeyboardLayout` and `KeyDescriptor` are now packed to
+  match the layout mandated by the UEFI specification. Previously, all
+  `HiiKeyboardLayout` fields after `layout_length` were at wrong offsets.
+- **Breaking**: `IfrTypeValue`, `HiiRef`, `HiiTime`, and `HiiDate` are now
+  packed to match the size and alignment mandated by the UEFI specification.
 
 ## Removed
 
