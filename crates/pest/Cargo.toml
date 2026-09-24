@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.83"
 name = "pest"
-version = "2.9.1"
+version = "2.9.2"
 authors = ["Dragoș Tiselice <dragostiselice@gmail.com>"]
 build = false
 autolib = false
