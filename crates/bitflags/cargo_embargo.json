@@ -23,5 +23,6 @@
   "run_cargo": false,
   "generate_rulesmk": true,
   "recovery_available": true,
+  "native_bridge_supported": true,
   "ota_recovery_ramdisk_available": true
 }

@@ -2,6 +2,7 @@
   "run_cargo": false,
   "recovery_available": true,
   "min_sdk_version": "29",
+  "native_bridge_supported": true,
   "ota_recovery_ramdisk_available": true,
   "package": {
     "log": {

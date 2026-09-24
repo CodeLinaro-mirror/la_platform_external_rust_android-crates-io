@@ -31,6 +31,7 @@ rust_library {
         "//apex_available:platform",
         "//apex_available:anyapex",
     ],
+    native_bridge_supported: true,
     ota_recovery_ramdisk_available: true,
     product_available: true,
     recovery_available: true,

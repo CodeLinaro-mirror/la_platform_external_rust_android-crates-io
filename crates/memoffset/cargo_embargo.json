@@ -29,5 +29,6 @@
     }
   ],
   "min_sdk_version": "29",
+  "native_bridge_supported": true,
   "recovery_available": true
 }
