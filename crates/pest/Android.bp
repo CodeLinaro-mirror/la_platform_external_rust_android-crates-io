@@ -17,7 +17,7 @@ rust_library_host {
     name: "libpest",
     crate_name: "pest",
     cargo_env_compat: true,
-    cargo_pkg_version: "2.9.1",
+    cargo_pkg_version: "2.9.2",
     crate_root: "src/lib.rs",
     edition: "2021",
     features: [
