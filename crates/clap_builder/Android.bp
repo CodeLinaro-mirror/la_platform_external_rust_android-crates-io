@@ -18,7 +18,7 @@ rust_library {
     host_supported: true,
     crate_name: "clap_builder",
     cargo_env_compat: true,
-    cargo_pkg_version: "4.6.0",
+    cargo_pkg_version: "4.6.2",
     crate_root: "src/lib.rs",
     edition: "2024",
     features: [
