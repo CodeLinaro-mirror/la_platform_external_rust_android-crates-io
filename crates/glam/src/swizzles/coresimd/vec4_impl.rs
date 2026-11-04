@@ -2,9 +2,11 @@
 
 #![allow(clippy::useless_conversion)]
 
-use crate::{Vec2, Vec3, Vec4, Vec4Swizzles};
+use crate::{Vec2, Vec3, Vec4, Vec4Swizzles, sealed::Sealed};
 
 use core::simd::*;
+
+impl Sealed for Vec4 {}
 
 impl Vec4Swizzles for Vec4 {
     type Vec2 = Vec2;

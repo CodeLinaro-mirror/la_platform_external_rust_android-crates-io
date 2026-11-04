@@ -41,8 +41,8 @@ use crate::subject::Subject;
 use super::PriorityPolicy;
 
 use super::{
-    backoff, AckPolicy, Consumer, DeliverPolicy, FromConsumer, IntoConsumerConfig, ReplayPolicy,
-    StreamError, StreamErrorKind,
+    backoff, poll_missed_heartbeat, AckPolicy, Consumer, DeliverPolicy, FromConsumer,
+    IntoConsumerConfig, ReplayPolicy, StreamError, StreamErrorKind,
 };
 use jetstream::consumer;
 
@@ -88,23 +88,16 @@ impl Consumer<Config> {
     /// Ok(())
     /// # }
     /// ```
+    ///
+    /// Each pull request asks for 200 messages, expires after 30 seconds and uses a 15 second
+    /// idle heartbeat. The batch and expiry are capped by the consumer's `max_batch` and
+    /// `max_expires` when those are lower, and the heartbeat follows a capped expiry down to
+    /// half of it. Use [Consumer::stream] to pick other values.
     pub async fn messages(&self) -> Result<Stream, StreamError> {
-        Stream::stream(
-            BatchConfig {
-                batch: 200,
-                expires: Some(Duration::from_secs(30)),
-                no_wait: false,
-                max_bytes: 0,
-                idle_heartbeat: Duration::from_secs(15),
-                min_pending: None,
-                min_ack_pending: None,
-                group: None,
-                #[cfg(feature = "server_2_12")]
-                priority: None,
-            },
-            self,
-        )
-        .await
+        self.stream()
+            .heartbeat(DEFAULT_IDLE_HEARTBEAT)
+            .messages()
+            .await
     }
 
     /// Enables customization of [Stream] by setting timeouts, heartbeats, maximum number of
@@ -309,6 +302,10 @@ impl Consumer<Config> {
     /// # }
     /// ```
     pub fn sequence(&self, batch: usize) -> Result<Sequence, BatchError> {
+        #[cfg(feature = "server_2_11")]
+        if self.config.priority_policy == PriorityPolicy::PinnedClient {
+            return Err(BatchError::new(BatchErrorKind::PinnedClient));
+        }
         let context = self.context.clone();
         let subject = format!(
             "{}.CONSUMER.MSG.NEXT.{}.{}",
@@ -343,6 +340,10 @@ pub struct Batch {
 
 impl Batch {
     async fn batch(batch: BatchConfig, consumer: &Consumer<Config>) -> Result<Batch, BatchError> {
+        #[cfg(feature = "server_2_11")]
+        if consumer.config.priority_policy == PriorityPolicy::PinnedClient {
+            return Err(BatchError::new(BatchErrorKind::PinnedClient));
+        }
         let inbox = Subject::from(consumer.context.client.new_inbox());
         let subscription = consumer.context.client.subscribe(inbox.clone()).await?;
         consumer.request_batch(batch.clone(), inbox.clone()).await?;
@@ -557,34 +558,18 @@ impl Consumer<OrderedConfig> {
             context: self.context.clone(),
             info: self.info.clone(),
         };
-        let stream = Stream::stream(
-            BatchConfig {
-                batch: 500,
-                expires: Some(Duration::from_secs(30)),
-                no_wait: false,
-                max_bytes: 0,
-                idle_heartbeat: Duration::from_secs(15),
-                min_pending: None,
-                min_ack_pending: None,
-                group: None,
-                #[cfg(feature = "server_2_12")]
-                priority: None,
-            },
-            &config,
-        )
-        .await?;
+        let stream = Stream::stream(ordered_batch_config(&self.info), &config).await?;
 
         Ok(Ordered {
             consumer_sequence: 0,
             stream_sequence: 0,
             missed_heartbeats: false,
+            limit_exceeded: false,
             create_stream: None,
             context: self.context.clone(),
-            consumer_name: self
-                .config
-                .name
-                .clone()
-                .unwrap_or_else(|| self.context.client.new_inbox()),
+            consumer_name: self.info.name.clone(),
+            name_prefix: self.info.name.clone(),
+            serial: 0,
             consumer: self.config,
             stream: Some(stream),
             stream_name: self.info.stream_name.clone(),
@@ -599,6 +584,10 @@ impl Consumer<OrderedConfig> {
 pub struct OrderedConfig {
     /// A name of the consumer. Can be specified for both durable and ephemeral
     /// consumers.
+    ///
+    /// When the consumer is recreated, the replacement is named `{name}_{n}`,
+    /// where `n` counts the recreates. Without a name, the name the server gave
+    /// the first consumer is used instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// A short description of the purpose of this consumer.
@@ -646,7 +635,8 @@ pub struct OrderedConfig {
     pub max_bytes: i64,
     /// Maximum expiry that can be set for a single Pull Request.
     /// This is used explicitly by [Consumer::batch] and [Consumer::fetch], but also, under the hood, by [Consumer::messages] and
-    /// [Consumer::stream]
+    /// [Consumer::stream]. The ordered consumer caps its pull expiry (30 seconds by default) at this
+    /// value, so values well below a second make it poll the server continuously.
     pub max_expires: Duration,
 }
 
@@ -682,6 +672,8 @@ impl From<OrderedConfig> for Config {
             priority_policy: PriorityPolicy::None,
             #[cfg(feature = "server_2_11")]
             priority_groups: Vec::new(),
+            #[cfg(feature = "server_2_11")]
+            priority_timeout: Duration::ZERO,
             #[cfg(feature = "server_2_11")]
             pause_until: None,
         }
@@ -739,9 +731,9 @@ impl IntoConsumerConfig for OrderedConfig {
             headers_only: self.headers_only,
             flow_control: false,
             idle_heartbeat: Duration::default(),
-            max_batch: 0,
-            max_bytes: 0,
-            max_expires: Duration::default(),
+            max_batch: self.max_batch,
+            max_bytes: self.max_bytes,
+            max_expires: self.max_expires,
             inactive_threshold: Duration::from_secs(30),
             num_replicas: 1,
             memory_storage: true,
@@ -753,6 +745,8 @@ impl IntoConsumerConfig for OrderedConfig {
             #[cfg(feature = "server_2_11")]
             priority_groups: Vec::new(),
             #[cfg(feature = "server_2_11")]
+            priority_timeout: Duration::ZERO,
+            #[cfg(feature = "server_2_11")]
             pause_until: None,
         }
     }
@@ -763,11 +757,18 @@ pub struct Ordered {
     stream_name: String,
     consumer: OrderedConfig,
     consumer_name: String,
+    name_prefix: String,
+    serial: u64,
     stream: Option<Stream>,
     create_stream: Option<BoxFuture<'static, Result<Stream, ConsumerRecreateError>>>,
     consumer_sequence: u64,
     stream_sequence: u64,
     missed_heartbeats: bool,
+    /// Set when the consumer was recreated because the server rejected a pull for exceeding
+    /// its request limits (they changed after creation); cleared by the next delivered message.
+    /// A second rejection without a message in between means recreating does not help, so the
+    /// error is surfaced instead.
+    limit_exceeded: bool,
 }
 
 impl futures_util::Stream for Ordered {
@@ -803,6 +804,7 @@ impl futures_util::Stream for Ordered {
                             } else {
                                 self.stream_sequence = info.stream_sequence;
                                 self.consumer_sequence = info.consumer_sequence;
+                                self.limit_exceeded = false;
                                 return Poll::Ready(Some(Ok(message)));
                             }
                         }
@@ -822,6 +824,15 @@ impl futures_util::Stream for Ordered {
                                 recreate = true;
                                 self.consumer_sequence = 0;
                             }
+                            // Recreating reads the current limits; see `limit_exceeded`.
+                            MessagesErrorKind::RequestLimitExceeded => {
+                                if self.limit_exceeded {
+                                    return Poll::Ready(Some(Err(err.into())));
+                                }
+                                self.limit_exceeded = true;
+                                recreate = true;
+                                self.consumer_sequence = 0;
+                            }
                             MessagesErrorKind::Pull
                             | MessagesErrorKind::PushBasedConsumer
                             | MessagesErrorKind::Other => {
@@ -837,11 +848,16 @@ impl futures_util::Stream for Ordered {
         // Recreate consumer if needed
         if recreate {
             self.stream = None;
+            self.serial += 1;
+            let name = format!("{}_{}", self.name_prefix, self.serial);
+            let consumer_name = std::mem::replace(&mut self.consumer_name, name.clone());
             self.create_stream = Some(Box::pin({
                 let context = self.context.clone();
-                let config = self.consumer.clone();
+                let config = OrderedConfig {
+                    name: Some(name),
+                    ..self.consumer.clone()
+                };
                 let stream_name = self.stream_name.clone();
-                let consumer_name = self.consumer_name.clone();
                 let sequence = self.stream_sequence;
                 async move {
                     tryhard::retry_fn(|| {
@@ -895,6 +911,11 @@ pub struct Stream {
     terminated: bool,
     heartbeat_timeout: Option<Pin<Box<tokio::time::Sleep>>>,
     started: Option<tokio::sync::oneshot::Sender<()>>,
+    /// Set only for [PriorityPolicy::PinnedClient] consumers, so a `Nats-Pin-Id` header stored
+    /// in a message of any other consumer is never sent back. The channel holds `None` while the
+    /// stream has no pin.
+    #[cfg(feature = "server_2_11")]
+    pin_id: Option<tokio::sync::watch::Sender<Option<String>>>,
 }
 
 impl Drop for Stream {
@@ -904,6 +925,12 @@ impl Drop for Stream {
 }
 
 impl Stream {
+    /// Ends the iterator and stops the background task from sending further pull requests.
+    fn terminate(&mut self) {
+        self.terminated = true;
+        self.task_handle.abort();
+    }
+
     async fn stream(
         batch_config: BatchConfig,
         consumer: &Consumer<Config>,
@@ -923,6 +950,8 @@ impl Stream {
         let (request_result_tx, request_result_rx) = tokio::sync::mpsc::channel(1);
         let (request_tx, mut request_rx) = tokio::sync::watch::channel(());
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        #[cfg(feature = "server_2_11")]
+        let (pin_id_tx, pin_id_rx) = tokio::sync::watch::channel(None);
         let task_handle = tokio::task::spawn({
             let batch = batch_config.clone();
             let consumer = consumer.clone();
@@ -979,7 +1008,13 @@ impl Stream {
                             debug!("expired pull request")},
                     }
 
-                    let request = serde_json::to_vec(&batch).map(Bytes::from).unwrap();
+                    let request = serde_json::to_vec(&PullRequest {
+                        batch: &batch,
+                        #[cfg(feature = "server_2_11")]
+                        pin_id: pin_id_rx.borrow().clone(),
+                    })
+                    .map(Bytes::from)
+                    .unwrap();
                     let result = context
                         .client
                         .publish_with_reply(subject.clone(), inbox.clone(), request.clone())
@@ -1011,6 +1046,9 @@ impl Stream {
             terminated: false,
             heartbeat_timeout: None,
             started: Some(started_tx),
+            #[cfg(feature = "server_2_11")]
+            pin_id: (consumer.config.priority_policy == PriorityPolicy::PinnedClient)
+                .then_some(pin_id_tx),
         })
     }
 }
@@ -1023,6 +1061,9 @@ pub enum OrderedErrorKind {
     PushBasedConsumer,
     Recreate,
     NoResponders,
+    /// The server kept rejecting pull requests for exceeding the consumer's request limits even
+    /// after the consumer was recreated. See [`MessagesErrorKind::RequestLimitExceeded`].
+    RequestLimitExceeded,
     Other,
 }
 
@@ -1036,6 +1077,7 @@ impl std::fmt::Display for OrderedErrorKind {
             Self::PushBasedConsumer => write!(f, "cannot use with push consumer"),
             Self::Recreate => write!(f, "consumer recreation failed"),
             Self::NoResponders => write!(f, "no responders"),
+            Self::RequestLimitExceeded => write!(f, "pull request exceeded consumer limits"),
         }
     }
 }
@@ -1063,6 +1105,10 @@ impl From<MessagesError> for OrderedError {
                 source: err.source,
             },
             MessagesErrorKind::NoResponders => OrderedError::new(OrderedErrorKind::NoResponders),
+            MessagesErrorKind::RequestLimitExceeded => OrderedError {
+                kind: OrderedErrorKind::RequestLimitExceeded,
+                source: err.source,
+            },
         }
     }
 }
@@ -1074,6 +1120,12 @@ pub enum MessagesErrorKind {
     Pull,
     PushBasedConsumer,
     NoResponders,
+    /// The server rejected the pull request because it exceeded one of the consumer's request
+    /// limits: `max_batch`, `max_expires` or `max_bytes`. The error source carries the server's
+    /// description, for example `Exceeded MaxRequestBatch of 100`. The iterator ends after this
+    /// error. [`Consumer::fetch`] and [`Consumer::batch`] report the same server rejection as an
+    /// opaque error.
+    RequestLimitExceeded,
     Other,
 }
 
@@ -1086,6 +1138,7 @@ impl std::fmt::Display for MessagesErrorKind {
             Self::Other => write!(f, "error"),
             Self::NoResponders => write!(f, "no responders"),
             Self::PushBasedConsumer => write!(f, "cannot use with push consumer"),
+            Self::RequestLimitExceeded => write!(f, "pull request exceeded consumer limits"),
         }
     }
 }
@@ -1107,24 +1160,6 @@ impl futures_util::Stream for Stream {
         }
         if self.terminated {
             return Poll::Ready(None);
-        }
-
-        if !self.batch_config.idle_heartbeat.is_zero() {
-            trace!("checking idle hearbeats");
-            let timeout = self.batch_config.idle_heartbeat.saturating_mul(2);
-            match self
-                .heartbeat_timeout
-                .get_or_insert_with(|| Box::pin(tokio::time::sleep(timeout)))
-                .poll_unpin(cx)
-            {
-                Poll::Ready(_) => {
-                    self.heartbeat_timeout = None;
-                    return Poll::Ready(Some(Err(MessagesError::new(
-                        MessagesErrorKind::MissingHeartbeat,
-                    ))));
-                }
-                Poll::Pending => (),
-            }
         }
 
         loop {
@@ -1175,11 +1210,19 @@ impl futures_util::Stream for Stream {
                     self.heartbeat_timeout = None;
                     match maybe_message {
                         Some(message) => match message.status.unwrap_or(StatusCode::OK) {
-                            StatusCode::TIMEOUT | StatusCode::REQUEST_TERMINATED => {
+                            StatusCode::TIMEOUT
+                            | StatusCode::REQUEST_TERMINATED
+                            | StatusCode::PIN_ID_MISMATCH => {
                                 debug!("received status message: {:?}", message);
+                                #[cfg(feature = "server_2_11")]
+                                if let (Some(StatusCode::PIN_ID_MISMATCH), Some(pin_id)) =
+                                    (message.status, &self.pin_id)
+                                {
+                                    pin_id.send_replace(None);
+                                }
                                 // If consumer has been deleted, error and shutdown the iterator.
                                 if message.description.as_deref() == Some("Consumer Deleted") {
-                                    self.terminated = true;
+                                    self.terminate();
                                     return Poll::Ready(Some(Err(MessagesError::new(
                                         MessagesErrorKind::ConsumerDeleted,
                                     ))));
@@ -1187,9 +1230,22 @@ impl futures_util::Stream for Stream {
                                 // If consumer is not pull based, error and shutdown the iterator.
                                 if message.description.as_deref() == Some("Consumer is push based")
                                 {
-                                    self.terminated = true;
+                                    self.terminate();
                                     return Poll::Ready(Some(Err(MessagesError::new(
                                         MessagesErrorKind::PushBasedConsumer,
+                                    ))));
+                                }
+                                // Bare 409 without pending headers; the same request would be
+                                // rejected again, so end the iterator instead of re-pulling.
+                                if let Some(description) =
+                                    message.description.as_deref().filter(|description| {
+                                        description.starts_with("Exceeded MaxRequest")
+                                    })
+                                {
+                                    self.terminate();
+                                    return Poll::Ready(Some(Err(MessagesError::with_source(
+                                        MessagesErrorKind::RequestLimitExceeded,
+                                        description.to_string(),
                                     ))));
                                 }
 
@@ -1231,6 +1287,22 @@ impl futures_util::Stream for Stream {
                             // We got an message from a stream.
                             StatusCode::OK => {
                                 trace!("message received");
+                                // A published `Nats-Pin-Id` can precede the server's.
+                                #[cfg(feature = "server_2_11")]
+                                if let (Some(pin_id), Some(id)) = (
+                                    &self.pin_id,
+                                    message.headers.as_ref().and_then(|headers| {
+                                        headers.get_last(crate::header::NATS_PIN_ID)
+                                    }),
+                                ) {
+                                    pin_id.send_if_modified(|pin_id| {
+                                        if pin_id.as_deref() == Some(id.as_str()) {
+                                            return false;
+                                        }
+                                        *pin_id = Some(id.as_str().to_owned());
+                                        true
+                                    });
+                                }
                                 self.pending_messages = self.pending_messages.saturating_sub(1);
                                 self.pending_bytes =
                                     self.pending_bytes.saturating_sub(message.length);
@@ -1261,14 +1333,29 @@ impl futures_util::Stream for Stream {
                 }
                 Poll::Pending => {
                     debug!("subscriber still pending");
-                    return std::task::Poll::Pending;
+                    break;
                 }
             }
         }
+
+        let idle_heartbeat = self.batch_config.idle_heartbeat;
+        if poll_missed_heartbeat(&mut self.heartbeat_timeout, idle_heartbeat, cx) {
+            return Poll::Ready(Some(Err(MessagesError::new(
+                MessagesErrorKind::MissingHeartbeat,
+            ))));
+        }
+        Poll::Pending
     }
 }
 
 /// Used for building configuration for a [Stream]. Created by a [Consumer::stream] on a [Consumer].
+///
+/// Values not set here default to 200 messages per pull request expiring after 30 seconds, with
+/// no idle heartbeat. Those defaults are capped by the consumer's `max_batch` and `max_expires`
+/// when lower. Values set explicitly are sent as given, except that a heartbeat is lowered to
+/// half of the expiry when the expiry was left to its default, as the server requires. A pull
+/// request exceeding the consumer's limits ends the stream with
+/// [`MessagesErrorKind::RequestLimitExceeded`].
 ///
 /// # Examples
 ///
@@ -1297,10 +1384,10 @@ impl futures_util::Stream for Stream {
 /// # Ok(())
 /// # }
 pub struct StreamBuilder<'a> {
-    batch: usize,
+    batch: Option<usize>,
     max_bytes: usize,
-    heartbeat: Duration,
-    expires: Duration,
+    heartbeat: Option<Duration>,
+    expires: Option<Duration>,
     group: Option<String>,
     min_pending: Option<usize>,
     min_ack_pending: Option<usize>,
@@ -1313,10 +1400,10 @@ impl<'a> StreamBuilder<'a> {
     pub fn new(consumer: &'a Consumer<Config>) -> Self {
         StreamBuilder {
             consumer,
-            batch: 200,
+            batch: None,
             max_bytes: 0,
-            expires: Duration::from_secs(30),
-            heartbeat: Duration::default(),
+            expires: None,
+            heartbeat: None,
             group: None,
             min_pending: None,
             min_ack_pending: None,
@@ -1405,12 +1492,12 @@ impl<'a> StreamBuilder<'a> {
     /// # }
     /// ```
     pub fn max_messages_per_batch(mut self, batch: usize) -> Self {
-        self.batch = batch;
+        self.batch = Some(batch);
         self
     }
 
     /// Sets heartbeat which will be send by the server if there are no messages for a given
-    /// [Consumer] pending.
+    /// [Consumer] pending. Lowered to half of the expiry if [`StreamBuilder::expires`] is not set.
     ///
     /// # Examples
     ///
@@ -1443,7 +1530,7 @@ impl<'a> StreamBuilder<'a> {
     /// # }
     /// ```
     pub fn heartbeat(mut self, heartbeat: Duration) -> Self {
-        self.heartbeat = heartbeat;
+        self.heartbeat = Some(heartbeat);
         self
     }
 
@@ -1482,7 +1569,7 @@ impl<'a> StreamBuilder<'a> {
     /// # }
     /// ```
     pub fn expires(mut self, expires: Duration) -> Self {
-        self.expires = expires;
+        self.expires = Some(expires);
         self
     }
 
@@ -1648,13 +1735,27 @@ impl<'a> StreamBuilder<'a> {
     /// # }
     /// ```
     pub async fn messages(self) -> Result<Stream, StreamError> {
+        let limits = &self.consumer.info.config;
+        let batch = self
+            .batch
+            .unwrap_or_else(|| clamp_batch(DEFAULT_BATCH, limits.max_batch));
+        let expires = self
+            .expires
+            .unwrap_or_else(|| clamp_expires(DEFAULT_EXPIRES, limits.max_expires));
+        let idle_heartbeat = match self.heartbeat {
+            // The user chose both; the server validates the pair.
+            Some(heartbeat) if self.expires.is_some() => heartbeat,
+            // We chose the expiry, so keep the heartbeat valid for it.
+            Some(heartbeat) => clamp_heartbeat(heartbeat, expires),
+            None => Duration::ZERO,
+        };
         Stream::stream(
             BatchConfig {
-                batch: self.batch,
-                expires: Some(self.expires),
+                batch,
+                expires: Some(expires),
                 no_wait: false,
                 max_bytes: self.max_bytes,
-                idle_heartbeat: self.heartbeat,
+                idle_heartbeat,
                 min_pending: self.min_pending,
                 group: self.group,
                 min_ack_pending: self.min_ack_pending,
@@ -1708,6 +1809,8 @@ pub struct FetchBuilder<'a> {
     min_pending: Option<usize>,
     min_ack_pending: Option<usize>,
     group: Option<String>,
+    #[cfg(feature = "server_2_12")]
+    priority: Option<usize>,
     consumer: &'a Consumer<Config>,
 }
 
@@ -1721,6 +1824,8 @@ impl<'a> FetchBuilder<'a> {
             min_pending: None,
             min_ack_pending: None,
             group: None,
+            #[cfg(feature = "server_2_12")]
+            priority: None,
             heartbeat: Duration::default(),
         }
     }
@@ -1924,7 +2029,7 @@ impl<'a> FetchBuilder<'a> {
     /// lower priority number, this stream will not get messages until those are satisfied.
     #[cfg(feature = "server_2_12")]
     pub fn priority(mut self, priority: usize) -> Self {
-        self.batch = priority;
+        self.priority = Some(priority);
         self
     }
 
@@ -2051,7 +2156,7 @@ impl<'a> FetchBuilder<'a> {
                 min_ack_pending: self.min_ack_pending,
                 group: self.group,
                 #[cfg(feature = "server_2_12")]
-                priority: None,
+                priority: self.priority,
             },
             self.consumer,
         )
@@ -2473,6 +2578,15 @@ pub struct BatchConfig {
     pub priority: Option<usize>,
 }
 
+#[derive(Serialize)]
+struct PullRequest<'a> {
+    #[serde(flatten)]
+    batch: &'a BatchConfig,
+    #[cfg(feature = "server_2_11")]
+    #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
+    pin_id: Option<String>,
+}
+
 fn is_default<T: Default + Eq>(t: &T) -> bool {
     t == &T::default()
 }
@@ -2580,6 +2694,12 @@ pub struct Config {
     #[cfg(feature = "server_2_11")]
     #[serde(default, skip_serializing_if = "is_default")]
     pub priority_groups: Vec<String>,
+    /// How long a client stays pinned without pulling, for [PriorityPolicy::PinnedClient].
+    /// Zero leaves it to the server, which defaults to 2 minutes.
+    #[cfg(feature = "server_2_11")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "server_2_11")))]
+    #[serde(default, with = "serde_nanos", skip_serializing_if = "is_default")]
+    pub priority_timeout: Duration,
     /// For suspending the consumer until the deadline.
     #[cfg(feature = "server_2_11")]
     #[serde(
@@ -2633,6 +2753,8 @@ impl IntoConsumerConfig for Config {
             #[cfg(feature = "server_2_11")]
             priority_groups: self.priority_groups,
             #[cfg(feature = "server_2_11")]
+            priority_timeout: self.priority_timeout,
+            #[cfg(feature = "server_2_11")]
             pause_until: self.pause_until,
         }
     }
@@ -2675,6 +2797,8 @@ impl FromConsumer for Config {
             #[cfg(feature = "server_2_11")]
             priority_groups: config.priority_groups,
             #[cfg(feature = "server_2_11")]
+            priority_timeout: config.priority_timeout,
+            #[cfg(feature = "server_2_11")]
             pause_until: config.pause_until,
         })
     }
@@ -2705,6 +2829,10 @@ pub enum BatchErrorKind {
     Pull,
     Flush,
     Serialize,
+    /// The consumer uses [PriorityPolicy::PinnedClient], which only pull streams support.
+    #[cfg(feature = "server_2_11")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "server_2_11")))]
+    PinnedClient,
 }
 
 impl std::fmt::Display for BatchErrorKind {
@@ -2714,6 +2842,8 @@ impl std::fmt::Display for BatchErrorKind {
             Self::Flush => write!(f, "flush failed"),
             Self::Serialize => write!(f, "serialize failed"),
             Self::Subscribe => write!(f, "subscribe failed"),
+            #[cfg(feature = "server_2_11")]
+            Self::PinnedClient => write!(f, "pinned client consumers need a pull stream"),
         }
     }
 }
@@ -2751,6 +2881,58 @@ impl std::fmt::Display for ConsumerRecreateErrorKind {
 
 pub type ConsumerRecreateError = Error<ConsumerRecreateErrorKind>;
 
+/// Default number of messages a [Stream] asks for in a single pull request.
+const DEFAULT_BATCH: usize = 200;
+/// Default time a pull request waits for messages.
+const DEFAULT_EXPIRES: Duration = Duration::from_secs(30);
+/// Default idle heartbeat for [Consumer::messages] and ordered consumers.
+const DEFAULT_IDLE_HEARTBEAT: Duration = Duration::from_secs(15);
+/// The number of messages an ordered consumer asks for in a single pull request.
+const ORDERED_BATCH: usize = 500;
+
+/// Caps a default pull batch at the consumer's `max_batch`; zero means no limit. The limit is
+/// set by the user or copied by the server from its `jetstream.limits.max_request_batch`, and a
+/// request above it is rejected with `409 Exceeded MaxRequestBatch`.
+fn clamp_batch(batch: usize, max_batch: i64) -> usize {
+    match usize::try_from(max_batch) {
+        Ok(max_batch) if max_batch > 0 => batch.min(max_batch),
+        _ => batch,
+    }
+}
+
+/// Caps a default pull expiry at the consumer's `max_expires`; zero means no limit. A request
+/// above it is rejected with `409 Exceeded MaxRequestExpires`.
+fn clamp_expires(expires: Duration, max_expires: Duration) -> Duration {
+    if max_expires.is_zero() {
+        expires
+    } else {
+        expires.min(max_expires)
+    }
+}
+
+/// Keeps the idle heartbeat at or below half of the expiry, as the server requires.
+fn clamp_heartbeat(heartbeat: Duration, expires: Duration) -> Duration {
+    heartbeat.min(expires / 2)
+}
+
+/// Builds the pull request configuration for an ordered consumer, with the batch and expiry
+/// capped by the consumer's limits.
+fn ordered_batch_config(info: &consumer::Info) -> BatchConfig {
+    let expires = clamp_expires(DEFAULT_EXPIRES, info.config.max_expires);
+    BatchConfig {
+        batch: clamp_batch(ORDERED_BATCH, info.config.max_batch),
+        expires: Some(expires),
+        no_wait: false,
+        max_bytes: 0,
+        idle_heartbeat: clamp_heartbeat(DEFAULT_IDLE_HEARTBEAT, expires),
+        min_pending: None,
+        min_ack_pending: None,
+        group: None,
+        #[cfg(feature = "server_2_12")]
+        priority: None,
+    }
+}
+
 async fn recreate_consumer_stream(
     context: &Context,
     config: &OrderedConfig,
@@ -2767,14 +2949,13 @@ async fn recreate_consumer_stream(
     );
     let _span_handle = span.enter();
     let config = config.to_owned();
+    let context = context.recovery_context();
     trace!("delete old consumer before creating new one");
 
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        context.delete_consumer_from_stream(consumer_name, stream_name),
-    )
-    .await
-    .ok();
+    context
+        .delete_consumer_from_stream(consumer_name, stream_name)
+        .await
+        .ok();
 
     let deliver_policy = {
         if sequence == 0 {
@@ -2786,20 +2967,20 @@ async fn recreate_consumer_stream(
         }
     };
     trace!("create the new ordered consumer for sequence {}", sequence);
-    let consumer = tokio::time::timeout(
-        Duration::from_secs(5),
-        context.create_consumer_on_stream(
+    let consumer = context
+        .create_consumer_on_stream(
             jetstream::consumer::pull::OrderedConfig {
                 deliver_policy,
                 ..config.clone()
             },
             stream_name,
-        ),
-    )
-    .await
-    .map_err(|err| ConsumerRecreateError::with_source(ConsumerRecreateErrorKind::TimedOut, err))?
-    .map_err(|err| ConsumerRecreateError::with_source(ConsumerRecreateErrorKind::Recreate, err))?;
+        )
+        .await
+        .map_err(|err| {
+            ConsumerRecreateError::with_source(ConsumerRecreateErrorKind::Recreate, err)
+        })?;
 
+    let batch_config = ordered_batch_config(&consumer.info);
     let config = Consumer {
         config: config.clone().into(),
         context: context.clone(),
@@ -2809,21 +2990,7 @@ async fn recreate_consumer_stream(
     trace!("create iterator");
     let stream = tokio::time::timeout(
         Duration::from_secs(5),
-        Stream::stream(
-            BatchConfig {
-                batch: 500,
-                expires: Some(Duration::from_secs(30)),
-                no_wait: false,
-                max_bytes: 0,
-                idle_heartbeat: Duration::from_secs(15),
-                min_pending: None,
-                min_ack_pending: None,
-                group: None,
-                #[cfg(feature = "server_2_12")]
-                priority: None,
-            },
-            &config,
-        ),
+        Stream::stream(batch_config, &config),
     )
     .await
     .map_err(|err| ConsumerRecreateError::with_source(ConsumerRecreateErrorKind::TimedOut, err))?

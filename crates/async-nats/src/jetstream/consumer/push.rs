@@ -12,8 +12,8 @@
 // limitations under the License.
 
 use super::{
-    backoff, AckPolicy, Consumer, DeliverPolicy, FromConsumer, IntoConsumerConfig, ReplayPolicy,
-    StreamError, StreamErrorKind,
+    backoff, poll_missed_heartbeat, AckPolicy, Consumer, DeliverPolicy, FromConsumer,
+    IntoConsumerConfig, ReplayPolicy, StreamError, StreamErrorKind,
 };
 
 #[cfg(feature = "server_2_11")]
@@ -22,7 +22,7 @@ use super::PriorityPolicy;
 use crate::{
     connection::State,
     error::Error,
-    jetstream::{self, Context, Message},
+    jetstream::{self, response::Response, Context, Message},
     StatusCode, Subscriber,
 };
 
@@ -125,58 +125,45 @@ impl futures_util::Stream for Messages {
     type Item = Result<Message, MessagesError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
-        if !self.config.idle_heartbeat.is_zero() {
-            let heartbeat_sleep = self.config.idle_heartbeat.saturating_mul(2);
-            match self
-                .heartbeat_sleep
-                .get_or_insert_with(|| Box::pin(tokio::time::sleep(heartbeat_sleep)))
-                .poll_unpin(cx)
-            {
-                Poll::Ready(_) => {
-                    self.heartbeat_sleep = None;
-                    return Poll::Ready(Some(Err(MessagesError::new(
-                        MessagesErrorKind::MissingHeartbeat,
-                    ))));
-                }
-                Poll::Pending => (),
-            }
-        }
-        loop {
-            match self.subscriber.receiver.poll_recv(cx) {
-                Poll::Ready(maybe_message) => {
-                    self.heartbeat_sleep = None;
-                    match maybe_message {
-                        Some(message) => match message.status {
-                            Some(StatusCode::IDLE_HEARTBEAT) => {
-                                if let Some(subject) = message.reply {
-                                    // TODO store pending_publish as a future and return errors from it
-                                    let client = self.context.client.clone();
-                                    tokio::task::spawn(async move {
-                                        client
-                                            .publish(subject, Bytes::from_static(b""))
-                                            .await
-                                            .unwrap();
-                                    });
-                                }
+        while let Poll::Ready(maybe_message) = self.subscriber.receiver.poll_recv(cx) {
+            self.heartbeat_sleep = None;
+            match maybe_message {
+                Some(message) => match message.status {
+                    Some(StatusCode::IDLE_HEARTBEAT) => {
+                        if let Some(subject) = message.reply {
+                            // TODO store pending_publish as a future and return errors from it
+                            let client = self.context.client.clone();
+                            tokio::task::spawn(async move {
+                                client
+                                    .publish(subject, Bytes::from_static(b""))
+                                    .await
+                                    .unwrap();
+                            });
+                        }
 
-                                continue;
-                            }
-                            Some(_) => {
-                                continue;
-                            }
-                            None => {
-                                return Poll::Ready(Some(Ok(jetstream::Message {
-                                    context: self.context.clone(),
-                                    message,
-                                })))
-                            }
-                        },
-                        None => return Poll::Ready(None),
+                        continue;
                     }
-                }
-                Poll::Pending => return Poll::Pending,
+                    Some(_) => {
+                        continue;
+                    }
+                    None => {
+                        return Poll::Ready(Some(Ok(jetstream::Message {
+                            context: self.context.clone(),
+                            message,
+                        })))
+                    }
+                },
+                None => return Poll::Ready(None),
             }
         }
+
+        let idle_heartbeat = self.config.idle_heartbeat;
+        if poll_missed_heartbeat(&mut self.heartbeat_sleep, idle_heartbeat, cx) {
+            return Poll::Ready(Some(Err(MessagesError::new(
+                MessagesErrorKind::MissingHeartbeat,
+            ))));
+        }
+        Poll::Pending
     }
 }
 
@@ -367,6 +354,8 @@ impl IntoConsumerConfig for Config {
             #[cfg(feature = "server_2_11")]
             priority_groups: Vec::new(),
             #[cfg(feature = "server_2_11")]
+            priority_timeout: Duration::ZERO,
+            #[cfg(feature = "server_2_11")]
             pause_until: self.pause_until,
         }
     }
@@ -390,6 +379,10 @@ pub struct OrderedConfig {
     pub deliver_subject: String,
     /// A name of the consumer. Can be specified for both durable and ephemeral
     /// consumers.
+    ///
+    /// When the consumer is recreated, the replacement is named `{name}_{n}`,
+    /// where `n` counts the recreates. Without a name, the name the server gave
+    /// the first consumer is used instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// A short description of the purpose of this consumer.
@@ -497,6 +490,8 @@ impl IntoConsumerConfig for OrderedConfig {
             #[cfg(feature = "server_2_11")]
             priority_groups: Vec::new(),
             #[cfg(feature = "server_2_11")]
+            priority_timeout: Duration::ZERO,
+            #[cfg(feature = "server_2_11")]
             pause_until: None,
         }
     }
@@ -517,12 +512,15 @@ impl Consumer<OrderedConfig> {
         let state = self.context.client.state.clone();
         Ok(Ordered {
             context: self.context.clone(),
+            consumer_name: self.info.name.clone(),
+            serial: 0,
             consumer: self,
             subscriber: Some(subscriber),
             subscriber_future: None,
             stream_sequence: last_sequence,
             consumer_sequence,
             heartbeat_sleep: None,
+            idle_heartbeats: 0,
             state,
             last_known_state: State::Connected,
             state_change_future: None,
@@ -533,15 +531,55 @@ impl Consumer<OrderedConfig> {
 pub struct Ordered {
     context: Context,
     consumer: Consumer<OrderedConfig>,
+    consumer_name: String,
+    serial: u64,
     subscriber: Option<Subscriber>,
     subscriber_future: Option<BoxFuture<'static, Result<Subscriber, ConsumerRecreateError>>>,
     stream_sequence: Arc<AtomicU64>,
     consumer_sequence: Arc<AtomicU64>,
     heartbeat_sleep: Option<Pin<Box<tokio::time::Sleep>>>,
+    /// Idle heartbeats received while in sync with the current consumer.
+    idle_heartbeats: u64,
     state: tokio::sync::watch::Receiver<State>,
     last_known_state: State,
     state_change_future:
         Option<BoxFuture<'static, Result<(), tokio::sync::watch::error::RecvError>>>,
+}
+
+// Only the KV history and keys streams use these.
+#[cfg_attr(not(feature = "kv"), allow(dead_code))]
+impl Ordered {
+    /// Number of idle heartbeats received while in sync with the current consumer.
+    ///
+    /// The server sends one when a heartbeat interval passes without a delivery.
+    pub(crate) fn idle_heartbeats(&self) -> u64 {
+        self.idle_heartbeats
+    }
+
+    /// Fetches the server's info for the current consumer, to check with
+    /// [`Ordered::delivered_all`].
+    pub(crate) fn consumer_info(&self) -> BoxFuture<'static, Result<super::Info, crate::Error>> {
+        let context = self.context.clone();
+        let subject = format!(
+            "CONSUMER.INFO.{}.{}",
+            self.consumer.info.stream_name, self.consumer_name
+        );
+        Box::pin(async move {
+            match context.request(subject, &serde_json::json!({})).await? {
+                Response::Ok(info) => Ok(info),
+                Response::Err { error } => Err(error.into()),
+            }
+        })
+    }
+
+    /// Whether `info`, fetched for the current consumer, shows nothing left to deliver and every
+    /// delivered message already received.
+    pub(crate) fn delivered_all(&self, info: &super::Info) -> bool {
+        self.subscriber.is_some()
+            && info.name == self.consumer_name
+            && info.num_pending == 0
+            && info.delivered.consumer_sequence == self.consumer_sequence.load(Ordering::Relaxed)
+    }
 }
 
 impl futures_util::Stream for Ordered {
@@ -603,9 +641,15 @@ impl futures_util::Stream for Ordered {
                 // Ensure we have a recreation future
                 if self.subscriber_future.is_none() {
                     trace!("Creating subscriber recreation future");
+                    self.serial += 1;
+                    let name = format!("{}_{}", self.consumer.info.name, self.serial);
+                    let consumer_name = std::mem::replace(&mut self.consumer_name, name.clone());
                     let context = self.context.clone();
                     let sequence = self.stream_sequence.clone();
-                    let config = self.consumer.config.clone();
+                    let config = OrderedConfig {
+                        name: Some(name),
+                        ..self.consumer.config.clone()
+                    };
                     let stream_name = self.consumer.info.stream_name.clone();
 
                     self.subscriber_future = Some(Box::pin(async move {
@@ -614,6 +658,7 @@ impl futures_util::Stream for Ordered {
                                 context.clone(),
                                 config.clone(),
                                 stream_name.clone(),
+                                consumer_name.clone(),
                                 sequence.load(Ordering::Relaxed),
                             )
                         })
@@ -673,6 +718,11 @@ impl futures_util::Stream for Ordered {
                                             self.heartbeat_sleep = None;
                                         }
                                     }
+                                }
+                                // Flow control requests carry a reply subject, idle heartbeats do
+                                // not.
+                                if message.reply.is_none() && self.subscriber.is_some() {
+                                    self.idle_heartbeats += 1;
                                 }
                                 // flow control.
                                 if let Some(subject) = message.reply.clone() {
@@ -738,17 +788,11 @@ impl futures_util::Stream for Ordered {
                         // buffered messages. That matters because recreation resumes from the
                         // last *delivered* sequence (AckPolicy::None), and on capped/discarding
                         // streams the dropped messages might no longer be replayable.
-                        if self
-                            .heartbeat_sleep
-                            .get_or_insert_with(|| {
-                                Box::pin(tokio::time::sleep(
-                                    ORDERED_IDLE_HEARTBEAT.saturating_mul(2),
-                                ))
-                            })
-                            .poll_unpin(cx)
-                            .is_ready()
-                        {
-                            self.heartbeat_sleep = None;
+                        if poll_missed_heartbeat(
+                            &mut self.heartbeat_sleep,
+                            ORDERED_IDLE_HEARTBEAT,
+                            cx,
+                        ) {
                             self.subscriber = None;
                             self.consumer_sequence.store(0, Ordering::Relaxed);
                             return Poll::Ready(Some(Err(OrderedError::new(
@@ -852,8 +896,16 @@ async fn recreate_consumer_and_subscription(
     context: Context,
     mut config: OrderedConfig,
     stream_name: String,
+    consumer_name: String,
     sequence: u64,
 ) -> Result<Subscriber, ConsumerRecreateError> {
+    let context = context.recovery_context();
+    trace!("delete old consumer before creating new one");
+    context
+        .delete_consumer_from_stream(&consumer_name, &stream_name)
+        .await
+        .ok();
+
     let delivery_subject = context.client.new_inbox();
     config.deliver_subject = delivery_subject;
 
@@ -884,20 +936,18 @@ async fn recreate_ephemeral_consumer(
         }
     };
 
-    let config = config.clone();
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        context.create_consumer_on_stream(
+    context
+        .create_consumer_on_stream(
             jetstream::consumer::push::OrderedConfig {
                 deliver_policy,
                 ..config
             },
-            stream_name.clone(),
-        ),
-    )
-    .await
-    .map_err(|_| ConsumerRecreateError::new(ConsumerRecreateErrorKind::TimedOut))?
-    .map_err(|err| ConsumerRecreateError::with_source(ConsumerRecreateErrorKind::Recreate, err))?;
+            stream_name,
+        )
+        .await
+        .map_err(|err| {
+            ConsumerRecreateError::with_source(ConsumerRecreateErrorKind::Recreate, err)
+        })?;
 
     Ok(())
 }

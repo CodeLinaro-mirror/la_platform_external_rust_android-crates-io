@@ -1,17 +1,17 @@
 name: "openssl-probe"
 description: "A library for helping to find system-wide trust anchor (\"root\") certificate locations based on paths typically used by `openssl`."
 third_party {
-  version: "0.2.1"
+  version: "0.2.2"
   license_type: NOTICE
   last_upgrade_date {
     year: 2026
-    month: 2
-    day: 21
+    month: 10
+    day: 27
   }
   homepage: "https://crates.io/crates/openssl-probe"
   identifier {
     type: "crates.io"
     value: "openssl-probe"
-    version: "0.2.1"
+    version: "0.2.2"
   }
 }

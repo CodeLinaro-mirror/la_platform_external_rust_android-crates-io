@@ -1,0 +1,25 @@
+
+---
+ src/reader/error.rs | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git b/src/reader/error.rs a/src/reader/error.rs
+index 8eec1b1b3..e7edbc881 100644
+--- b/src/reader/error.rs
++++ a/src/reader/error.rs
+@@ -218,6 +218,15 @@ impl From<io::Error> for Error {
+     }
+ }
+ 
++impl From<ErrorKind> for Error {
++    fn from(kind: ErrorKind) -> Self {
++        Error {
++            pos: TextPosition::new(),
++            kind,
++        }
++    }
++}
++
+ impl Clone for ErrorKind {
+     #[cold]
+     fn clone(&self) -> Self {

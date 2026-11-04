@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "gbm"
-version = "0.16.0"
+version = "0.16.1"
 authors = ["Victoria Brekenfeld <github@drakulix.de>"]
 build = false
 exclude = [

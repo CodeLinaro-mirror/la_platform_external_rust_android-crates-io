@@ -1,0 +1,18 @@
+[package]
+name = "nonblock"
+version = "0.2.0"
+authors = ["Anthony Nowell <anowell@gmail.com>"]
+description = "Read available data from file descriptors without blocking (e.g. sockets, streams, child stdout, named pipes)"
+documentation = "http://anowell.github.io/nonblock-rs/nonblock/"
+repository = "https://github.com/anowell/nonblock-rs"
+license = "MIT"
+edition = "2021"
+
+keywords = ["nonblocking", "O_NONBLOCK", "reader"]
+
+[dependencies]
+libc = "0.2.126"
+
+[dev-dependencies]
+chrono = { version = "0.4.19", features = ["serde"] }
+serde_json = "1.0.81"

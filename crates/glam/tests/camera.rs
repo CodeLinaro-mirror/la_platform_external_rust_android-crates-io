@@ -2,7 +2,7 @@
 mod support;
 
 macro_rules! impl_camera_tests {
-    ($t:ident, $affine3:ident, $mat4:ident, $mat3:ident, $vec4:ident, $vec3:ident, $quat:ident, $camera:ident) => {
+    ($t:ident, $mat4:ident, $mat3:ident, $vec4:ident, $vec3:ident, $camera:ident) => {
         struct AxisConfig {
             forward: $vec3,
             right: $vec3,
@@ -278,6 +278,13 @@ macro_rules! impl_camera_tests {
                 let p = proj::opengl::orthographic(-10.0, 10.0, -5.0, 5.0, -10.0, 10.0);
                 assert_approx_eq!(p.z_axis, $vec4::new(0.0, 0.0, 0.1, 0.0));
                 assert_approx_eq!(p.w_axis, $vec4::new(0.0, 0.0, 0.0, 1.0));
+
+                // Mirrored bounds are allowed.
+                let _ = proj::opengl::orthographic(1.0, -1.0, 1.0, -1.0, 1.0, 2.0);
+
+                should_glam_assert!({ proj::opengl::orthographic(1.0, 1.0, -1.0, 1.0, 1.0, 2.0) });
+                should_glam_assert!({ proj::opengl::orthographic(-1.0, 1.0, 1.0, 1.0, 1.0, 2.0) });
+                should_glam_assert!({ proj::opengl::orthographic(-1.0, 1.0, -1.0, 1.0, 1.0, 1.0) });
             });
 
             glam_test!(test_frustum_opengl, {
@@ -358,456 +365,6 @@ macro_rules! impl_camera_tests {
                 use super::*;
                 impl_pipeline_tests!($t, LH_ZUP_AXES);
             }
-        }
-
-        mod deprecated {
-            #![allow(deprecated)]
-
-            use super::*;
-
-            glam_test!(test_quat_look_at, {
-                let eye = $vec3::new(0.0, 0.0, -5.0);
-                let center = $vec3::new(0.0, 0.0, 0.0);
-                let up = $vec3::new(1.0, 0.0, 0.0);
-
-                let point = $vec3::new(1.0, 0.0, 0.0);
-
-                let deprecated_lh = $quat::look_at_lh(eye, center, up);
-                let deprecated_rh = $quat::look_at_rh(eye, center, up);
-                let lh = $camera::lh::view::look_at_quat(eye, center, up);
-                let rh = $camera::rh::view::look_at_quat(eye, center, up);
-                assert_approx_eq!(deprecated_lh, lh);
-                assert_approx_eq!(deprecated_rh, rh);
-
-                assert_approx_eq!(lh * point, $vec3::new(0.0, 1.0, 0.0));
-                assert_approx_eq!(rh * point, $vec3::new(0.0, 1.0, 0.0));
-
-                let dir = (center - eye).normalize();
-
-                let deprecated_lh = $quat::look_to_lh(dir, up);
-                let deprecated_rh = $quat::look_to_rh(dir, up);
-                let lh = $camera::lh::view::look_to_quat(dir, up);
-                let rh = $camera::rh::view::look_to_quat(dir, up);
-                assert_approx_eq!(deprecated_lh, lh);
-                assert_approx_eq!(deprecated_rh, rh);
-
-                assert_approx_eq!(lh * point, $vec3::new(0.0, 1.0, 0.0));
-                assert_approx_eq!(rh * point, $vec3::new(0.0, 1.0, 0.0));
-
-                should_glam_assert!({ $camera::lh::view::look_to_quat($vec3::ONE, $vec3::ZERO) });
-                should_glam_assert!({ $camera::lh::view::look_to_quat($vec3::ZERO, $vec3::ONE) });
-                should_glam_assert!({ $camera::rh::view::look_to_quat($vec3::ONE, $vec3::ZERO) });
-                should_glam_assert!({ $camera::rh::view::look_to_quat($vec3::ZERO, $vec3::ONE) });
-            });
-
-            glam_test!(test_mat3_look_at, {
-                let eye = $vec3::new(0.0, 0.0, -5.0);
-                let center = $vec3::new(0.0, 0.0, 0.0);
-                let up = $vec3::new(1.0, 0.0, 0.0);
-
-                let point = $vec3::new(1.0, 0.0, 0.0);
-
-                let deprecated_lh = $mat3::look_at_lh(eye, center, up);
-                let deprecated_rh = $mat3::look_at_rh(eye, center, up);
-                let lh = $camera::lh::view::look_at_mat3(eye, center, up);
-                let rh = $camera::rh::view::look_at_mat3(eye, center, up);
-                assert_approx_eq!(deprecated_lh, lh);
-                assert_approx_eq!(deprecated_rh, rh);
-
-                assert_approx_eq!(lh * point, $vec3::new(0.0, 1.0, 0.0));
-                assert_approx_eq!(rh * point, $vec3::new(0.0, 1.0, 0.0));
-
-                let dir = (center - eye).normalize();
-                let deprecated_lh = $mat3::look_to_lh(dir, up);
-                let deprecated_rh = $mat3::look_to_rh(dir, up);
-                let lh = $camera::lh::view::look_to_mat3(dir, up);
-                let rh = $camera::rh::view::look_to_mat3(dir, up);
-                assert_approx_eq!(deprecated_lh, lh);
-                assert_approx_eq!(deprecated_rh, rh);
-
-                assert_approx_eq!(lh * point, $vec3::new(0.0, 1.0, 0.0));
-                assert_approx_eq!(rh * point, $vec3::new(0.0, 1.0, 0.0));
-
-                should_glam_assert!({ $camera::lh::view::look_to_mat3($vec3::ONE, $vec3::ZERO) });
-                should_glam_assert!({ $camera::lh::view::look_to_mat3($vec3::ZERO, $vec3::ONE) });
-                should_glam_assert!({ $camera::rh::view::look_to_mat3($vec3::ONE, $vec3::ZERO) });
-                should_glam_assert!({ $camera::rh::view::look_to_mat3($vec3::ZERO, $vec3::ONE) });
-            });
-
-            glam_test!(test_affine3_look_at, {
-                let eye = $vec3::new(0.0, 0.0, -5.0);
-                let center = $vec3::new(0.0, 0.0, 0.0);
-                let up = $vec3::new(1.0, 0.0, 0.0);
-
-                let point = $vec3::new(1.0, 0.0, 0.0);
-
-                let deprecated_lh = $affine3::look_at_lh(eye, center, up);
-                let deprecated_rh = $affine3::look_at_rh(eye, center, up);
-                let lh = $camera::lh::view::look_at_affine3(eye, center, up);
-                let rh = $camera::rh::view::look_at_affine3(eye, center, up);
-                assert_approx_eq!(deprecated_lh, lh);
-                assert_approx_eq!(deprecated_rh, rh);
-
-                assert_approx_eq!(lh.transform_point3(point), $vec3::new(0.0, 1.0, 5.0));
-                assert_approx_eq!(rh.transform_point3(point), $vec3::new(0.0, 1.0, -5.0));
-
-                let dir = (center - eye).normalize();
-                let deprecated_lh = $affine3::look_to_lh(eye, dir, up);
-                let deprecated_rh = $affine3::look_to_rh(eye, dir, up);
-                let lh = $camera::lh::view::look_to_affine3(eye, dir, up);
-                let rh = $camera::rh::view::look_to_affine3(eye, dir, up);
-                assert_approx_eq!(deprecated_lh, lh);
-                assert_approx_eq!(deprecated_rh, rh);
-
-                assert_approx_eq!(lh.transform_point3(point), $vec3::new(0.0, 1.0, 5.0));
-                assert_approx_eq!(rh.transform_point3(point), $vec3::new(0.0, 1.0, -5.0));
-
-                should_glam_assert!({
-                    $camera::lh::view::look_at_affine3($vec3::ONE, $vec3::ZERO, $vec3::ZERO)
-                });
-                should_glam_assert!({
-                    $camera::rh::view::look_at_affine3($vec3::ONE, $vec3::ZERO, $vec3::ZERO)
-                });
-            });
-
-            glam_test!(test_mat4_look_at, {
-                let eye = $vec3::new(0.0, 0.0, -5.0);
-                let center = $vec3::new(0.0, 0.0, 0.0);
-                let up = $vec3::new(1.0, 0.0, 0.0);
-
-                let point = $vec3::new(1.0, 0.0, 0.0);
-
-                let deprecated_lh = $mat4::look_at_lh(eye, center, up);
-                let deprecated_rh = $mat4::look_at_rh(eye, center, up);
-                let lh = $camera::lh::view::look_at_mat4(eye, center, up);
-                let rh = $camera::rh::view::look_at_mat4(eye, center, up);
-                assert_approx_eq!(deprecated_lh, lh);
-                assert_approx_eq!(deprecated_rh, rh);
-
-                assert_approx_eq!(lh.transform_point3(point), $vec3::new(0.0, 1.0, 5.0));
-                assert_approx_eq!(rh.transform_point3(point), $vec3::new(0.0, 1.0, -5.0));
-
-                let dir = (center - eye).normalize();
-                let deprecated_lh = $mat4::look_to_lh(eye, dir, up);
-                let deprecated_rh = $mat4::look_to_rh(eye, dir, up);
-                let lh = $camera::lh::view::look_to_mat4(eye, dir, up);
-                let rh = $camera::rh::view::look_to_mat4(eye, dir, up);
-                assert_approx_eq!(deprecated_lh, lh);
-                assert_approx_eq!(deprecated_rh, rh);
-
-                assert_approx_eq!(lh.transform_point3(point), $vec3::new(0.0, 1.0, 5.0));
-                assert_approx_eq!(rh.transform_point3(point), $vec3::new(0.0, 1.0, -5.0));
-
-                should_glam_assert!({
-                    $camera::lh::view::look_to_mat4($vec3::ZERO, $vec3::ONE, $vec3::ZERO)
-                });
-                should_glam_assert!({
-                    $camera::lh::view::look_to_mat4($vec3::ZERO, $vec3::ZERO, $vec3::ONE)
-                });
-                should_glam_assert!({
-                    $camera::rh::view::look_to_mat4($vec3::ZERO, $vec3::ONE, $vec3::ZERO)
-                });
-                should_glam_assert!({
-                    $camera::rh::view::look_to_mat4($vec3::ZERO, $vec3::ZERO, $vec3::ONE)
-                });
-            });
-
-            glam_test!(test_mat4_frustum_gl_rh, {
-                let fov_y_radians = $t::to_radians(90.0);
-                let aspect_ratio = 2.0;
-                let z_near = 5.0;
-                let z_far = 15.0;
-                let f = (0.5 * fov_y_radians).tan();
-                let height = z_near * f;
-                let width = height * aspect_ratio;
-                let deprecated_frustum =
-                    $mat4::frustum_rh_gl(-width, width, -height, height, z_near, z_far);
-                let deprecated_perspective =
-                    $mat4::perspective_rh_gl(fov_y_radians, aspect_ratio, z_near, z_far);
-                let frustum = $camera::rh::proj::opengl::frustum(
-                    -width, width, -height, height, z_near, z_far,
-                );
-                let perspective = $camera::rh::proj::opengl::perspective(
-                    fov_y_radians,
-                    aspect_ratio,
-                    z_near,
-                    z_far,
-                );
-                assert_approx_eq!(deprecated_frustum, frustum);
-                assert_approx_eq!(deprecated_perspective, perspective);
-                assert_approx_eq!(frustum, perspective);
-
-                should_glam_assert!({
-                    $camera::rh::proj::opengl::frustum(-1.0, 1.0, -1.0, 1.0, 0.0, 1.0)
-                });
-                should_glam_assert!({
-                    $camera::rh::proj::opengl::frustum(-1.0, 1.0, -1.0, 1.0, 1.0, 0.0)
-                });
-            });
-
-            glam_test!(test_mat4_frustum_lh, {
-                let fov_y_radians = $t::to_radians(90.0);
-                let aspect_ratio = 2.0;
-                let z_near = 5.0;
-                let z_far = 15.0;
-                let f = (0.5 * fov_y_radians).tan();
-                let height = z_near * f;
-                let width = height * aspect_ratio;
-                let deprecated_frustum =
-                    $mat4::frustum_lh(-width, width, -height, height, z_near, z_far);
-                let deprecated_perspective =
-                    $mat4::perspective_lh(fov_y_radians, aspect_ratio, z_near, z_far);
-                let frustum = $camera::lh::proj::directx::frustum(
-                    -width, width, -height, height, z_near, z_far,
-                );
-                let perspective = $camera::lh::proj::directx::perspective(
-                    fov_y_radians,
-                    aspect_ratio,
-                    z_near,
-                    z_far,
-                );
-                assert_approx_eq!(deprecated_frustum, frustum);
-                assert_approx_eq!(deprecated_perspective, perspective);
-                assert_approx_eq!(frustum, perspective);
-
-                should_glam_assert!({
-                    $camera::lh::proj::directx::frustum(-1.0, 1.0, -1.0, 1.0, 0.0, 1.0)
-                });
-                should_glam_assert!({
-                    $camera::lh::proj::directx::frustum(-1.0, 1.0, -1.0, 1.0, 1.0, 0.0)
-                });
-            });
-
-            glam_test!(test_mat4_frustum_rh, {
-                let fov_y_radians = $t::to_radians(90.0);
-                let aspect_ratio = 2.0;
-                let z_near = 5.0;
-                let z_far = 15.0;
-                let f = (0.5 * fov_y_radians).tan();
-                let height = z_near * f;
-                let width = height * aspect_ratio;
-                let deprecated_frustum =
-                    $mat4::frustum_rh(-width, width, -height, height, z_near, z_far);
-                let deprecated_perspective =
-                    $mat4::perspective_rh(fov_y_radians, aspect_ratio, z_near, z_far);
-                let frustum = $camera::rh::proj::directx::frustum(
-                    -width, width, -height, height, z_near, z_far,
-                );
-                let perspective = $camera::rh::proj::directx::perspective(
-                    fov_y_radians,
-                    aspect_ratio,
-                    z_near,
-                    z_far,
-                );
-                assert_approx_eq!(deprecated_frustum, frustum);
-                assert_approx_eq!(deprecated_perspective, perspective);
-                assert_approx_eq!(frustum, perspective);
-
-                should_glam_assert!({
-                    $camera::rh::proj::directx::frustum(-1.0, 1.0, -1.0, 1.0, 0.0, 1.0)
-                });
-                should_glam_assert!({
-                    $camera::rh::proj::directx::frustum(-1.0, 1.0, -1.0, 1.0, 1.0, 0.0)
-                });
-            });
-
-            glam_test!(test_mat4_perspective_gl_rh, {
-                let deprecated_projection =
-                    $mat4::perspective_rh_gl($t::to_radians(90.0), 2.0, 5.0, 15.0);
-                let projection =
-                    $camera::rh::proj::opengl::perspective($t::to_radians(90.0), 2.0, 5.0, 15.0);
-                assert_approx_eq!(deprecated_projection, projection);
-
-                let original = $vec3::new(5.0, 5.0, -15.0);
-                let projected = projection * original.extend(1.0);
-                assert_approx_eq!($vec4::new(2.5, 5.0, 15.0, 15.0), projected);
-
-                let original = $vec3::new(5.0, 5.0, -5.0);
-                let projected = projection * original.extend(1.0);
-                assert_approx_eq!($vec4::new(2.5, 5.0, -5.0, 5.0), projected);
-            });
-
-            glam_test!(test_mat4_perspective_lh, {
-                let deprecated_projection =
-                    $mat4::perspective_lh($t::to_radians(90.0), 2.0, 5.0, 15.0);
-                let projection =
-                    $camera::lh::proj::directx::perspective($t::to_radians(90.0), 2.0, 5.0, 15.0);
-                assert_approx_eq!(deprecated_projection, projection);
-
-                let original = $vec3::new(5.0, 5.0, 15.0);
-                let projected = projection * original.extend(1.0);
-                assert_approx_eq!($vec4::new(2.5, 5.0, 15.0, 15.0), projected, 1e-6);
-
-                let original = $vec3::new(5.0, 5.0, 5.0);
-                let projected = projection * original.extend(1.0);
-                assert_approx_eq!($vec4::new(2.5, 5.0, 0.0, 5.0), projected, 1e-6);
-
-                should_glam_assert!({
-                    $camera::lh::proj::directx::perspective(0.0, 1.0, 1.0, 0.0)
-                });
-                should_glam_assert!({
-                    $camera::lh::proj::directx::perspective(0.0, 1.0, 0.0, 1.0)
-                });
-            });
-
-            glam_test!(test_mat4_perspective_infinite_lh, {
-                let deprecated_projection =
-                    $mat4::perspective_infinite_lh($t::to_radians(90.0), 2.0, 5.0);
-                let projection = $camera::lh::proj::directx::perspective_infinite(
-                    $t::to_radians(90.0),
-                    2.0,
-                    5.0,
-                );
-                assert_approx_eq!(deprecated_projection, projection);
-
-                let original = $vec3::new(5.0, 5.0, 15.0);
-                let projected = projection * original.extend(1.0);
-                assert_approx_eq!($vec4::new(2.5, 5.0, 10.0, 15.0), projected, 1e-6);
-
-                let original = $vec3::new(5.0, 5.0, 5.0);
-                let projected = projection * original.extend(1.0);
-                assert_approx_eq!($vec4::new(2.5, 5.0, 0.0, 5.0), projected, 1e-6);
-
-                should_glam_assert!({
-                    $camera::lh::proj::directx::perspective_infinite(0.0, 1.0, 0.0)
-                });
-            });
-
-            glam_test!(test_mat4_perspective_infinite_reverse_lh, {
-                let deprecated_projection =
-                    $mat4::perspective_infinite_reverse_lh($t::to_radians(90.0), 2.0, 5.0);
-                let projection = $camera::lh::proj::directx::perspective_infinite_reverse(
-                    $t::to_radians(90.0),
-                    2.0,
-                    5.0,
-                );
-                assert_approx_eq!(deprecated_projection, projection);
-
-                let original = $vec3::new(5.0, 5.0, 15.0);
-                let projected = projection * original.extend(1.0);
-                assert_approx_eq!($vec4::new(2.5, 5.0, 5.0, 15.0), projected, 1e-6);
-
-                let original = $vec3::new(5.0, 5.0, 5.0);
-                let projected = projection * original.extend(1.0);
-                assert_approx_eq!($vec4::new(2.5, 5.0, 5.0, 5.0), projected, 1e-6);
-
-                should_glam_assert!({
-                    $camera::lh::proj::directx::perspective_infinite_reverse(0.0, 1.0, 0.0)
-                });
-            });
-
-            glam_test!(test_mat4_perspective_rh, {
-                let deprecated_projection =
-                    $mat4::perspective_rh($t::to_radians(90.0), 2.0, 5.0, 15.0);
-                let projection =
-                    $camera::rh::proj::directx::perspective($t::to_radians(90.0), 2.0, 5.0, 15.0);
-                assert_approx_eq!(deprecated_projection, projection);
-
-                let original = $vec3::new(5.0, 5.0, 15.0);
-                let projected = projection * original.extend(1.0);
-                assert_approx_eq!($vec4::new(2.5, 5.0, -30.0, -15.0), projected, 1e-6);
-
-                let original = $vec3::new(5.0, 5.0, 5.0);
-                let projected = projection * original.extend(1.0);
-                assert_approx_eq!($vec4::new(2.5, 5.0, -15.0, -5.0), projected, 1e-6);
-
-                should_glam_assert!({
-                    $camera::lh::proj::directx::perspective(0.0, 1.0, 1.0, 0.0)
-                });
-                should_glam_assert!({
-                    $camera::lh::proj::directx::perspective(0.0, 1.0, 0.0, 1.0)
-                });
-            });
-
-            glam_test!(test_mat4_perspective_infinite_rh, {
-                let deprecated_projection =
-                    $mat4::perspective_infinite_rh($t::to_radians(90.0), 2.0, 5.0);
-                let projection = $camera::rh::proj::directx::perspective_infinite(
-                    $t::to_radians(90.0),
-                    2.0,
-                    5.0,
-                );
-                assert_approx_eq!(deprecated_projection, projection);
-
-                let original = $vec3::new(5.0, 5.0, 15.0);
-                let projected = projection * original.extend(1.0);
-                assert_approx_eq!($vec4::new(2.5, 5.0, -20.0, -15.0), projected);
-
-                let original = $vec3::new(5.0, 5.0, 5.0);
-                let projected = projection * original.extend(1.0);
-                assert_approx_eq!($vec4::new(2.5, 5.0, -10.0, -5.0), projected);
-
-                should_glam_assert!({
-                    $camera::rh::proj::directx::perspective_infinite(0.0, 1.0, 0.0)
-                });
-            });
-
-            glam_test!(test_mat4_perspective_infinite_reverse_rh, {
-                let deprecated_projection =
-                    $mat4::perspective_infinite_reverse_rh($t::to_radians(90.0), 2.0, 5.0);
-                let projection = $camera::rh::proj::directx::perspective_infinite_reverse(
-                    $t::to_radians(90.0),
-                    2.0,
-                    5.0,
-                );
-                assert_approx_eq!(deprecated_projection, projection);
-
-                let original = $vec3::new(5.0, 5.0, 15.0);
-                let projected = projection * original.extend(1.0);
-                assert_approx_eq!($vec4::new(2.5, 5.0, 5.0, -15.0), projected);
-
-                let original = $vec3::new(5.0, 5.0, 5.0);
-                let projected = projection * original.extend(1.0);
-                assert_approx_eq!($vec4::new(2.5, 5.0, 5.0, -5.0), projected);
-
-                should_glam_assert!({
-                    $camera::rh::proj::directx::perspective_infinite_reverse(0.0, 1.0, 0.0)
-                });
-            });
-
-            glam_test!(test_mat4_orthographic_gl_rh, {
-                let deprecated_projection =
-                    $mat4::orthographic_rh_gl(-10.0, 10.0, -5.0, 5.0, 1.0, 11.0);
-                let projection =
-                    $camera::rh::proj::opengl::orthographic(-10.0, 10.0, -5.0, 5.0, 1.0, 11.0);
-                assert_approx_eq!(deprecated_projection, projection);
-
-                let original = $vec4::new(5.0, 5.0, -5.0, 1.0);
-                let projected = projection.mul_vec4(original);
-                assert_approx_eq!(projected, $vec4::new(0.5, 1.0, -0.2, 1.0));
-            });
-
-            glam_test!(test_mat4_orthographic_rh, {
-                let deprecated_projection =
-                    $mat4::orthographic_rh(-10.0, 10.0, -5.0, 5.0, -10.0, 10.0);
-                let projection =
-                    $camera::rh::proj::directx::orthographic(-10.0, 10.0, -5.0, 5.0, -10.0, 10.0);
-                assert_approx_eq!(deprecated_projection, projection);
-
-                let original = $vec4::new(5.0, 5.0, -5.0, 1.0);
-                let projected = projection.mul_vec4(original);
-                assert_approx_eq!(projected, $vec4::new(0.5, 1.0, 0.75, 1.0));
-
-                let original = $vec4::new(5.0, 5.0, 5.0, 1.0);
-                let projected = projection.mul_vec4(original);
-                assert_approx_eq!(projected, $vec4::new(0.5, 1.0, 0.25, 1.0));
-            });
-
-            glam_test!(test_mat4_orthographic_lh, {
-                let deprecated_projection =
-                    $mat4::orthographic_lh(-10.0, 10.0, -5.0, 5.0, -10.0, 10.0);
-                let projection =
-                    $camera::lh::proj::directx::orthographic(-10.0, 10.0, -5.0, 5.0, -10.0, 10.0);
-                assert_approx_eq!(deprecated_projection, projection);
-
-                let original = $vec4::new(5.0, 5.0, -5.0, 1.0);
-                let projected = projection.mul_vec4(original);
-                assert_approx_eq!(projected, $vec4::new(0.5, 1.0, 0.25, 1.0));
-
-                let original = $vec4::new(5.0, 5.0, 5.0, 1.0);
-                let projected = projection.mul_vec4(original);
-                assert_approx_eq!(projected, $vec4::new(0.5, 1.0, 0.75, 1.0));
-            });
         }
     };
 }
@@ -932,6 +489,10 @@ macro_rules! impl_pipeline_tests {
             check_view(&$world, &v);
             check_proj_direction(&$world, &NDC_OPENGL, &v, &p);
             check_proj_near_far(&$world, &NDC_OPENGL, &v, &p);
+
+            should_glam_assert!({ proj::opengl::orthographic(1.0, 1.0, -1.0, 1.0, 1.0, 2.0) });
+            should_glam_assert!({ proj::opengl::orthographic(-1.0, 1.0, 1.0, 1.0, 1.0, 2.0) });
+            should_glam_assert!({ proj::opengl::orthographic(-1.0, 1.0, -1.0, 1.0, 1.0, 1.0) });
         });
 
         glam_test!(test_vulkan_orthographic_pipeline, {
@@ -940,6 +501,10 @@ macro_rules! impl_pipeline_tests {
             check_view(&$world, &v);
             check_proj_direction(&$world, &NDC_VULKAN, &v, &p);
             check_proj_near_far(&$world, &NDC_VULKAN, &v, &p);
+
+            should_glam_assert!({ proj::vulkan::orthographic(1.0, 1.0, -1.0, 1.0, 1.0, 2.0) });
+            should_glam_assert!({ proj::vulkan::orthographic(-1.0, 1.0, 1.0, 1.0, 1.0, 2.0) });
+            should_glam_assert!({ proj::vulkan::orthographic(-1.0, 1.0, -1.0, 1.0, 1.0, 1.0) });
         });
 
         glam_test!(test_directx_orthographic_pipeline, {
@@ -948,6 +513,10 @@ macro_rules! impl_pipeline_tests {
             check_view(&$world, &v);
             check_proj_direction(&$world, &NDC_DIRECTX, &v, &p);
             check_proj_near_far(&$world, &NDC_DIRECTX, &v, &p);
+
+            should_glam_assert!({ proj::directx::orthographic(1.0, 1.0, -1.0, 1.0, 1.0, 2.0) });
+            should_glam_assert!({ proj::directx::orthographic(-1.0, 1.0, 1.0, 1.0, 1.0, 2.0) });
+            should_glam_assert!({ proj::directx::orthographic(-1.0, 1.0, -1.0, 1.0, 1.0, 1.0) });
         });
 
         // ---- frustum ----
@@ -1024,13 +593,13 @@ macro_rules! impl_pipeline_tests {
 }
 
 mod camera {
-    use glam::{camera, Affine3, Mat3, Mat4, Quat, Vec3, Vec4};
-    impl_camera_tests!(f32, Affine3, Mat4, Mat3, Vec4, Vec3, Quat, camera);
+    use glam::{Mat3, Mat4, Vec3, Vec4};
+    impl_camera_tests!(f32, Mat4, Mat3, Vec4, Vec3, camera);
 
     mod affine3a {
+        use glam::Vec3;
         use glam::camera::lh::view as lh_view;
         use glam::camera::rh::view as rh_view;
-        use glam::Vec3;
 
         glam_test!(test_rh_look_at_affine3a, {
             let eye = Vec3::new(0.0, 0.0, -5.0);
@@ -1111,50 +680,11 @@ mod camera {
             let rot = lh_view::look_to_mat3a(dir, up);
             assert_approx_eq!(rot * Vec3A::X, Vec3A::new(0.0, 1.0, 0.0));
         });
-
-        mod deprecated {
-            #![allow(deprecated)]
-            use glam::camera::lh::view as lh_view;
-            use glam::camera::rh::view as rh_view;
-            use glam::{Mat3A, Vec3, Vec3A};
-
-            glam_test!(test_mat3a_look_at, {
-                let eye = Vec3::new(0.0, 0.0, -5.0);
-                let center = Vec3::ZERO;
-                let up = Vec3::new(1.0, 0.0, 0.0);
-
-                let deprecated_lh = Mat3A::look_at_lh(eye, center, up);
-                let deprecated_rh = Mat3A::look_at_rh(eye, center, up);
-                let lh = lh_view::look_at_mat3a(eye, center, up);
-                let rh = rh_view::look_at_mat3a(eye, center, up);
-                assert_approx_eq!(deprecated_lh, lh);
-                assert_approx_eq!(deprecated_rh, rh);
-
-                assert_approx_eq!(lh * Vec3A::X, Vec3A::new(0.0, 1.0, 0.0));
-                assert_approx_eq!(rh * Vec3A::X, Vec3A::new(0.0, 1.0, 0.0));
-
-                let dir = (center - eye).normalize();
-                let deprecated_lh = Mat3A::look_to_lh(dir, up);
-                let deprecated_rh = Mat3A::look_to_rh(dir, up);
-                let lh = lh_view::look_to_mat3a(dir, up);
-                let rh = rh_view::look_to_mat3a(dir, up);
-                assert_approx_eq!(deprecated_lh, lh);
-                assert_approx_eq!(deprecated_rh, rh);
-
-                assert_approx_eq!(lh * Vec3A::X, Vec3A::new(0.0, 1.0, 0.0));
-                assert_approx_eq!(rh * Vec3A::X, Vec3A::new(0.0, 1.0, 0.0));
-
-                should_glam_assert!({ lh_view::look_to_mat3a(Vec3::ONE, Vec3::ZERO) });
-                should_glam_assert!({ lh_view::look_to_mat3a(Vec3::ZERO, Vec3::ONE) });
-                should_glam_assert!({ rh_view::look_to_mat3a(Vec3::ONE, Vec3::ZERO) });
-                should_glam_assert!({ rh_view::look_to_mat3a(Vec3::ZERO, Vec3::ONE) });
-            });
-        }
     }
 }
 
 #[cfg(feature = "f64")]
 mod dcamera {
-    use glam::{dcamera, DAffine3, DMat3, DMat4, DQuat, DVec3, DVec4};
-    impl_camera_tests!(f64, DAffine3, DMat4, DMat3, DVec4, DVec3, DQuat, dcamera);
+    use glam::{DMat3, DMat4, DVec3, DVec4};
+    impl_camera_tests!(f64, DMat4, DMat3, DVec4, DVec3, dcamera);
 }

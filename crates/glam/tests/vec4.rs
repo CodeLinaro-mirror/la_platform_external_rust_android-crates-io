@@ -1562,56 +1562,70 @@ macro_rules! impl_vec4_float_tests {
                 #[cfg(not(any(feature = "debug-glam-assert", feature = "glam-assert")))]
                 {
                     assert_eq!($vec4::ONE, $vec4::NAN.clamp($vec4::NAN, $vec4::ONE));
-                    assert!($vec4::NAN
-                        .clamp($vec4::NEG_ONE, $vec4::NAN)
-                        .is_nan_mask()
-                        .all());
+                    assert!(
+                        $vec4::NAN
+                            .clamp($vec4::NEG_ONE, $vec4::NAN)
+                            .is_nan_mask()
+                            .all()
+                    );
                 }
             } else if $vec4::USES_NEON {
-                assert!($vec4::NAN
-                    .clamp($vec4::NEG_ONE, $vec4::ONE)
-                    .is_nan_mask()
-                    .all());
+                assert!(
+                    $vec4::NAN
+                        .clamp($vec4::NEG_ONE, $vec4::ONE)
+                        .is_nan_mask()
+                        .all()
+                );
                 #[cfg(not(any(feature = "debug-glam-assert", feature = "glam-assert")))]
                 {
                     assert!($vec4::NAN.clamp($vec4::NAN, $vec4::ONE).is_nan_mask().all());
-                    assert!($vec4::NAN
-                        .clamp($vec4::NEG_ONE, $vec4::NAN)
-                        .is_nan_mask()
-                        .all());
+                    assert!(
+                        $vec4::NAN
+                            .clamp($vec4::NEG_ONE, $vec4::NAN)
+                            .is_nan_mask()
+                            .all()
+                    );
                 }
             } else if $vec4::USES_SSE2 {
                 assert_eq!($vec4::NEG_ONE, $vec4::NAN.clamp($vec4::NEG_ONE, $vec4::ONE));
                 #[cfg(not(any(feature = "debug-glam-assert", feature = "glam-assert")))]
                 {
                     assert_eq!($vec4::ONE, $vec4::NAN.clamp($vec4::NAN, $vec4::ONE));
-                    assert!($vec4::NAN
-                        .clamp($vec4::NEG_ONE, $vec4::NAN)
-                        .is_nan_mask()
-                        .all());
+                    assert!(
+                        $vec4::NAN
+                            .clamp($vec4::NEG_ONE, $vec4::NAN)
+                            .is_nan_mask()
+                            .all()
+                    );
                 }
             } else if $vec4::USES_WASM_SIMD {
-                assert!($vec4::NAN
-                    .clamp($vec4::NEG_ONE, $vec4::ONE)
-                    .is_nan_mask()
-                    .all());
+                assert!(
+                    $vec4::NAN
+                        .clamp($vec4::NEG_ONE, $vec4::ONE)
+                        .is_nan_mask()
+                        .all()
+                );
                 #[cfg(not(any(feature = "debug-glam-assert", feature = "glam-assert")))]
                 {
                     assert!($vec4::NAN.clamp($vec4::NAN, $vec4::ONE).is_nan_mask().all());
-                    assert!($vec4::NAN
-                        .clamp($vec4::NEG_ONE, $vec4::NAN)
-                        .is_nan_mask()
-                        .all());
+                    assert!(
+                        $vec4::NAN
+                            .clamp($vec4::NEG_ONE, $vec4::NAN)
+                            .is_nan_mask()
+                            .all()
+                    );
                 }
             } else if $vec4::USES_CORE_SIMD {
                 assert_eq!($vec4::NEG_ONE, $vec4::NAN.clamp($vec4::NEG_ONE, $vec4::ONE));
                 #[cfg(not(any(feature = "debug-glam-assert", feature = "glam-assert")))]
                 {
                     assert_eq!($vec4::ONE, $vec4::NAN.clamp($vec4::NAN, $vec4::ONE));
-                    assert!($vec4::NAN
-                        .clamp($vec4::NEG_ONE, $vec4::NAN)
-                        .is_nan_mask()
-                        .all());
+                    assert!(
+                        $vec4::NAN
+                            .clamp($vec4::NEG_ONE, $vec4::NAN)
+                            .is_nan_mask()
+                            .all()
+                    );
                 }
             }
         });
@@ -1831,6 +1845,50 @@ macro_rules! impl_vec4_float_tests {
             assert_approx_eq!(v1, v0.lerp(v1, 1.0));
         });
 
+        glam_test!(test_lerp_monotonic, {
+            let v0 = $vec4::new(-1.0, -1.0, -1.0, -1.0);
+            let v1 = $vec4::new(1.0, 1.0, 1.0, 1.0);
+            assert_approx_eq!(v0, v0.lerp_monotonic(v1, 0.0));
+            assert_approx_eq!(v1, v0.lerp_monotonic(v1, 1.0));
+            assert_approx_eq!($vec4::ZERO, v0.lerp_monotonic(v1, 0.5));
+
+            // Equal inputs are preserved exactly, which `lerp` does not guarantee.
+            let a = $vec4::splat(0.1);
+            assert_eq!(a, a.lerp_monotonic(a, 0.25));
+
+            // Monotonic in `s`, including for nearly equal inputs.
+            let b = $vec4::splat(0.1000001);
+            let mut prev = a.lerp_monotonic(b, 0.0);
+            for i in 1..=100 {
+                let s = i as $t / 100.0;
+                let v = a.lerp_monotonic(b, s);
+                assert!(v.cmpge(prev).all(), "not monotonic at s = {s}");
+                prev = v;
+            }
+
+            // Extrapolates linearly outside `[0, 1]`.
+            assert_approx_eq!(
+                $vec4::new(-3.0, -3.0, -3.0, -3.0),
+                v0.lerp_monotonic(v1, -1.0)
+            );
+            assert_approx_eq!($vec4::new(3.0, 3.0, 3.0, 3.0), v0.lerp_monotonic(v1, 2.0));
+
+            // Documented tradeoff: evaluating `rhs - self` first loses `rhs` when the inputs differ
+            // greatly in magnitude, and overflows to infinity for opposite-sign extremes. `lerp`
+            // is unaffected, which `test_lerp_big_difference` covers.
+            let large = $vec4::splat(-1.0e30);
+            let small = $vec4::splat(16.0);
+            assert_eq!($vec4::ZERO, large.lerp_monotonic(small, 1.0));
+
+            let max = $vec4::splat($t::MAX);
+            assert_eq!($vec4::ZERO, max.lerp(-max, 0.5));
+            let overflowed = max.lerp_monotonic(-max, 0.5);
+            assert!(!overflowed.is_finite());
+            assert!(!overflowed.is_nan());
+            // `rhs - self` overflows, so even `s == 0.0` does not return `self` here.
+            assert!(max.lerp_monotonic(-max, 0.0).is_nan());
+        });
+
         glam_test!(test_move_towards, {
             let v0 = $vec4::new(-1.0, -1.0, -1.0, -1.0);
             let v1 = $vec4::new(1.0, 1.0, 1.0, 1.0);
@@ -2041,6 +2099,7 @@ macro_rules! impl_vec4_float_tests {
                 $vec4::new(6.0, 8.0, 0.0, 0.0) // lengthened to length 10.0
             );
             should_glam_assert!({ $vec4::ONE.clamp_length(1.0, 0.0) });
+            should_glam_assert!({ $vec4::ONE.clamp_length(-1.0, 1.0) });
         });
 
         glam_test!(test_clamp_length_max, {
@@ -2054,6 +2113,7 @@ macro_rules! impl_vec4_float_tests {
                 $vec4::new(2.0, 1.0, 0.0, 0.0).clamp_length_max(5.0),
                 $vec4::new(2.0, 1.0, 0.0, 0.0) // unchanged
             );
+            should_glam_assert!({ $vec4::ONE.clamp_length_max(-1.0) });
         });
 
         glam_test!(test_clamp_length_min, {
@@ -2067,6 +2127,7 @@ macro_rules! impl_vec4_float_tests {
                 $vec4::new(0.6, 0.8, 0.0, 0.0).clamp_length_min(10.0),
                 $vec4::new(6.0, 8.0, 0.0, 0.0) // lengthened to length 10.0
             );
+            should_glam_assert!({ $vec4::ONE.clamp_length_min(-1.0) });
         });
 
         glam_test!(test_mul_add, {
@@ -2088,6 +2149,8 @@ macro_rules! impl_vec4_float_tests {
             let incident = $vec4::new(1.0, -1.0, 1.0, 1.0);
             let normal = $vec4::Y;
             assert_approx_eq!(incident.reflect(normal), $vec4::ONE);
+
+            should_glam_assert!({ incident.reflect($vec4::ONE) });
         });
 
         glam_test!(test_refract, {
@@ -2098,11 +2161,16 @@ macro_rules! impl_vec4_float_tests {
             let incident = $vec4::new(1.0, -1.0, 0.0, 0.0).normalize();
             let normal = $vec4::Y;
             assert_approx_eq!(incident.refract(normal, 1.5), $vec4::ZERO);
+
+            should_glam_assert!({ $vec4::ONE.refract($vec4::Y, 0.5) });
+            should_glam_assert!({ $vec4::X.refract($vec4::ONE, 0.5) });
         });
 
         glam_test!(test_homogeneous, {
             let v = $vec4::new(1.0, 2.0, 3.0, 1.0);
             assert_approx_eq!(v, v.project().to_homogeneous());
+
+            should_glam_assert!({ $vec4::new(1.0, 2.0, 3.0, 0.0).project() });
         });
     };
 }
@@ -2154,7 +2222,7 @@ macro_rules! impl_vec4_bit_op_tests {
 }
 
 mod bvec4 {
-    use glam::{bvec4, BVec4};
+    use glam::{BVec4, bvec4};
 
     glam_test!(test_mask_align, {
         use std::mem;
@@ -2166,7 +2234,7 @@ mod bvec4 {
 }
 
 mod bvec4a {
-    use glam::{bvec4a, BVec4A};
+    use glam::{BVec4A, bvec4a};
 
     glam_test!(test_mask_align, {
         use std::mem;
@@ -2182,7 +2250,7 @@ mod vec4 {
     use glam::BVec4;
     #[cfg(not(feature = "scalar-math"))]
     use glam::BVec4A;
-    use glam::{vec4, Vec2, Vec3, Vec4};
+    use glam::{Vec2, Vec3, Vec4, vec4};
 
     glam_test!(test_align, {
         use std::mem;
@@ -2197,22 +2265,22 @@ mod vec4 {
     glam_test!(test_as, {
         #[cfg(feature = "f64")]
         use glam::DVec4;
+        #[cfg(feature = "i8")]
+        use glam::I8Vec4;
         #[cfg(feature = "i16")]
         use glam::I16Vec4;
         #[cfg(feature = "i64")]
         use glam::I64Vec4;
-        #[cfg(feature = "i8")]
-        use glam::I8Vec4;
         #[cfg(feature = "isize")]
         use glam::ISizeVec4;
         #[cfg(feature = "i32")]
         use glam::IVec4;
+        #[cfg(feature = "u8")]
+        use glam::U8Vec4;
         #[cfg(feature = "u16")]
         use glam::U16Vec4;
         #[cfg(feature = "u64")]
         use glam::U64Vec4;
-        #[cfg(feature = "u8")]
-        use glam::U8Vec4;
         #[cfg(feature = "usize")]
         use glam::USizeVec4;
         #[cfg(feature = "u32")]
@@ -2300,7 +2368,7 @@ mod vec4 {
 
 #[cfg(feature = "f64")]
 mod dvec4 {
-    use glam::{dvec4, BVec4, DVec2, DVec3, DVec4, IVec4, UVec4, Vec4};
+    use glam::{BVec4, DVec2, DVec3, DVec4, IVec4, UVec4, Vec4, dvec4};
 
     glam_test!(test_align, {
         use std::mem;
@@ -2530,27 +2598,27 @@ macro_rules! impl_vec4_usize_try_from_tests {
 
 #[cfg(feature = "i8")]
 mod i8vec4 {
+    #[cfg(feature = "i8")]
+    use glam::I8Vec4;
     #[cfg(feature = "i16")]
     use glam::I16Vec4;
     #[cfg(feature = "i64")]
     use glam::I64Vec4;
-    #[cfg(feature = "i8")]
-    use glam::I8Vec4;
     #[cfg(feature = "isize")]
     use glam::ISizeVec4;
     #[cfg(feature = "i32")]
     use glam::IVec4;
+    #[cfg(feature = "u8")]
+    use glam::U8Vec4;
     #[cfg(feature = "u16")]
     use glam::U16Vec4;
     #[cfg(feature = "u64")]
     use glam::U64Vec4;
-    #[cfg(feature = "u8")]
-    use glam::U8Vec4;
     #[cfg(feature = "usize")]
     use glam::USizeVec4;
     #[cfg(feature = "u32")]
     use glam::UVec4;
-    use glam::{i8vec4, BVec4, I8Vec2, I8Vec3};
+    use glam::{BVec4, I8Vec2, I8Vec3, i8vec4};
 
     glam_test!(test_align, {
         use std::mem;
@@ -2577,12 +2645,12 @@ mod i8vec4 {
 
 #[cfg(feature = "u8")]
 mod u8vec4 {
+    #[cfg(feature = "i8")]
+    use glam::I8Vec4;
     #[cfg(feature = "i16")]
     use glam::I16Vec4;
     #[cfg(feature = "i64")]
     use glam::I64Vec4;
-    #[cfg(feature = "i8")]
-    use glam::I8Vec4;
     #[cfg(feature = "isize")]
     use glam::ISizeVec4;
     #[cfg(feature = "i32")]
@@ -2595,7 +2663,7 @@ mod u8vec4 {
     use glam::USizeVec4;
     #[cfg(feature = "u32")]
     use glam::UVec4;
-    use glam::{u8vec4, BVec4, U8Vec2, U8Vec3, U8Vec4};
+    use glam::{BVec4, U8Vec2, U8Vec3, U8Vec4, u8vec4};
 
     glam_test!(test_align, {
         use std::mem;
@@ -2622,25 +2690,25 @@ mod u8vec4 {
 
 #[cfg(feature = "i16")]
 mod i16vec4 {
-    #[cfg(feature = "i64")]
-    use glam::I64Vec4;
     #[cfg(feature = "i8")]
     use glam::I8Vec4;
+    #[cfg(feature = "i64")]
+    use glam::I64Vec4;
     #[cfg(feature = "isize")]
     use glam::ISizeVec4;
     #[cfg(feature = "i32")]
     use glam::IVec4;
+    #[cfg(feature = "u8")]
+    use glam::U8Vec4;
     #[cfg(feature = "u16")]
     use glam::U16Vec4;
     #[cfg(feature = "u64")]
     use glam::U64Vec4;
-    #[cfg(feature = "u8")]
-    use glam::U8Vec4;
     #[cfg(feature = "usize")]
     use glam::USizeVec4;
     #[cfg(feature = "u32")]
     use glam::UVec4;
-    use glam::{i16vec4, BVec4, I16Vec2, I16Vec3, I16Vec4};
+    use glam::{BVec4, I16Vec2, I16Vec3, I16Vec4, i16vec4};
 
     glam_test!(test_align, {
         use std::mem;
@@ -2667,25 +2735,25 @@ mod i16vec4 {
 
 #[cfg(feature = "u16")]
 mod u16vec4 {
+    #[cfg(feature = "i8")]
+    use glam::I8Vec4;
     #[cfg(feature = "i16")]
     use glam::I16Vec4;
     #[cfg(feature = "i64")]
     use glam::I64Vec4;
-    #[cfg(feature = "i8")]
-    use glam::I8Vec4;
     #[cfg(feature = "isize")]
     use glam::ISizeVec4;
     #[cfg(feature = "i32")]
     use glam::IVec4;
-    #[cfg(feature = "u64")]
-    use glam::U64Vec4;
     #[cfg(feature = "u8")]
     use glam::U8Vec4;
+    #[cfg(feature = "u64")]
+    use glam::U64Vec4;
     #[cfg(feature = "usize")]
     use glam::USizeVec4;
     #[cfg(feature = "u32")]
     use glam::UVec4;
-    use glam::{u16vec4, BVec4, U16Vec2, U16Vec3, U16Vec4};
+    use glam::{BVec4, U16Vec2, U16Vec3, U16Vec4, u16vec4};
 
     glam_test!(test_align, {
         use std::mem;
@@ -2712,25 +2780,25 @@ mod u16vec4 {
 
 #[cfg(feature = "i32")]
 mod ivec4 {
+    #[cfg(feature = "i8")]
+    use glam::I8Vec4;
     #[cfg(feature = "i16")]
     use glam::I16Vec4;
     #[cfg(feature = "i64")]
     use glam::I64Vec4;
-    #[cfg(feature = "i8")]
-    use glam::I8Vec4;
     #[cfg(feature = "isize")]
     use glam::ISizeVec4;
+    #[cfg(feature = "u8")]
+    use glam::U8Vec4;
     #[cfg(feature = "u16")]
     use glam::U16Vec4;
     #[cfg(feature = "u64")]
     use glam::U64Vec4;
-    #[cfg(feature = "u8")]
-    use glam::U8Vec4;
     #[cfg(feature = "usize")]
     use glam::USizeVec4;
     #[cfg(feature = "u32")]
     use glam::UVec4;
-    use glam::{ivec4, BVec4, IVec2, IVec3, IVec4};
+    use glam::{BVec4, IVec2, IVec3, IVec4, ivec4};
 
     glam_test!(test_align, {
         use std::mem;
@@ -2757,25 +2825,25 @@ mod ivec4 {
 
 #[cfg(feature = "u32")]
 mod uvec4 {
+    #[cfg(feature = "i8")]
+    use glam::I8Vec4;
     #[cfg(feature = "i16")]
     use glam::I16Vec4;
     #[cfg(feature = "i64")]
     use glam::I64Vec4;
-    #[cfg(feature = "i8")]
-    use glam::I8Vec4;
     #[cfg(feature = "isize")]
     use glam::ISizeVec4;
     #[cfg(feature = "i32")]
     use glam::IVec4;
+    #[cfg(feature = "u8")]
+    use glam::U8Vec4;
     #[cfg(feature = "u16")]
     use glam::U16Vec4;
     #[cfg(feature = "u64")]
     use glam::U64Vec4;
-    #[cfg(feature = "u8")]
-    use glam::U8Vec4;
     #[cfg(feature = "usize")]
     use glam::USizeVec4;
-    use glam::{uvec4, BVec4, UVec2, UVec3, UVec4};
+    use glam::{BVec4, UVec2, UVec3, UVec4, uvec4};
 
     glam_test!(test_align, {
         use std::mem;
@@ -2802,25 +2870,25 @@ mod uvec4 {
 
 #[cfg(feature = "i64")]
 mod i64vec4 {
-    #[cfg(feature = "i16")]
-    use glam::I16Vec4;
     #[cfg(feature = "i8")]
     use glam::I8Vec4;
+    #[cfg(feature = "i16")]
+    use glam::I16Vec4;
     #[cfg(feature = "isize")]
     use glam::ISizeVec4;
     #[cfg(feature = "i32")]
     use glam::IVec4;
+    #[cfg(feature = "u8")]
+    use glam::U8Vec4;
     #[cfg(feature = "u16")]
     use glam::U16Vec4;
     #[cfg(feature = "u64")]
     use glam::U64Vec4;
-    #[cfg(feature = "u8")]
-    use glam::U8Vec4;
     #[cfg(feature = "usize")]
     use glam::USizeVec4;
     #[cfg(feature = "u32")]
     use glam::UVec4;
-    use glam::{i64vec4, BVec4, I64Vec2, I64Vec3, I64Vec4};
+    use glam::{BVec4, I64Vec2, I64Vec3, I64Vec4, i64vec4};
 
     glam_test!(test_align, {
         use std::mem;
@@ -2847,25 +2915,25 @@ mod i64vec4 {
 
 #[cfg(feature = "u64")]
 mod u64vec4 {
+    #[cfg(feature = "i8")]
+    use glam::I8Vec4;
     #[cfg(feature = "i16")]
     use glam::I16Vec4;
     #[cfg(feature = "i64")]
     use glam::I64Vec4;
-    #[cfg(feature = "i8")]
-    use glam::I8Vec4;
     #[cfg(feature = "isize")]
     use glam::ISizeVec4;
     #[cfg(feature = "i32")]
     use glam::IVec4;
-    #[cfg(feature = "u16")]
-    use glam::U16Vec4;
     #[cfg(feature = "u8")]
     use glam::U8Vec4;
+    #[cfg(feature = "u16")]
+    use glam::U16Vec4;
     #[cfg(feature = "usize")]
     use glam::USizeVec4;
     #[cfg(feature = "u32")]
     use glam::UVec4;
-    use glam::{u64vec4, BVec4, U64Vec2, U64Vec3, U64Vec4};
+    use glam::{BVec4, U64Vec2, U64Vec3, U64Vec4, u64vec4};
 
     glam_test!(test_align, {
         use std::mem;
@@ -2892,25 +2960,25 @@ mod u64vec4 {
 
 #[cfg(all(feature = "isize", not(target_arch = "wasm32")))]
 mod isizevec4 {
+    #[cfg(feature = "i8")]
+    use glam::I8Vec4;
     #[cfg(feature = "i16")]
     use glam::I16Vec4;
     #[cfg(feature = "i64")]
     use glam::I64Vec4;
-    #[cfg(feature = "i8")]
-    use glam::I8Vec4;
     #[cfg(feature = "i32")]
     use glam::IVec4;
+    #[cfg(feature = "u8")]
+    use glam::U8Vec4;
     #[cfg(feature = "u16")]
     use glam::U16Vec4;
     #[cfg(feature = "u64")]
     use glam::U64Vec4;
-    #[cfg(feature = "u8")]
-    use glam::U8Vec4;
     #[cfg(feature = "usize")]
     use glam::USizeVec4;
     #[cfg(feature = "u32")]
     use glam::UVec4;
-    use glam::{isizevec4, BVec4, ISizeVec2, ISizeVec3, ISizeVec4};
+    use glam::{BVec4, ISizeVec2, ISizeVec3, ISizeVec4, isizevec4};
 
     glam_test!(test_align, {
         use std::mem;
@@ -2937,25 +3005,25 @@ mod isizevec4 {
 
 #[cfg(feature = "usize")]
 mod usizevec4 {
+    #[cfg(feature = "i8")]
+    use glam::I8Vec4;
     #[cfg(feature = "i16")]
     use glam::I16Vec4;
     #[cfg(feature = "i64")]
     use glam::I64Vec4;
-    #[cfg(feature = "i8")]
-    use glam::I8Vec4;
     #[cfg(feature = "isize")]
     use glam::ISizeVec4;
     #[cfg(feature = "i32")]
     use glam::IVec4;
+    #[cfg(feature = "u8")]
+    use glam::U8Vec4;
     #[cfg(feature = "u16")]
     use glam::U16Vec4;
     #[cfg(feature = "u64")]
     use glam::U64Vec4;
-    #[cfg(feature = "u8")]
-    use glam::U8Vec4;
     #[cfg(feature = "u32")]
     use glam::UVec4;
-    use glam::{usizevec4, BVec4, USizeVec2, USizeVec3, USizeVec4};
+    use glam::{BVec4, USizeVec2, USizeVec3, USizeVec4, usizevec4};
 
     glam_test!(test_align, {
         use std::mem;

@@ -210,6 +210,15 @@ macro_rules! impl_affine2_tests {
                 $affine2::from_scale_angle_translation(out_scale, out_rotation, out_translation),
                 1e-6
             );
+
+            // A zero determinant panics.
+            should_glam_assert!({ $affine2::ZERO.to_scale_angle_translation() });
+            // A subnormal column has zero length, so the resulting scale has a
+            // zero element even though the determinant is non-zero.
+            should_glam_assert!({
+                $affine2::from_cols($vec2::new($t::MIN_POSITIVE, 0.0), $vec2::Y, $vec2::ZERO)
+                    .to_scale_angle_translation()
+            });
         });
 
         glam_test!(test_affine2_ops, {
@@ -291,7 +300,7 @@ macro_rules! impl_affine2_tests {
 }
 
 mod affine2 {
-    use super::support::{deg, FloatCompare};
+    use super::support::{FloatCompare, deg};
     use glam::{Affine2, Mat2, Mat3, Vec2};
 
     impl FloatCompare for Affine2 {
@@ -357,7 +366,7 @@ mod affine2 {
 
 #[cfg(feature = "f64")]
 mod daffine2 {
-    use super::support::{deg, FloatCompare};
+    use super::support::{FloatCompare, deg};
     use glam::{DAffine2, DMat2, DMat3, DVec2};
 
     impl FloatCompare for DAffine2 {

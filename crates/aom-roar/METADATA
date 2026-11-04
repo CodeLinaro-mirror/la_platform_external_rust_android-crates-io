@@ -1,0 +1,17 @@
+name: "aom-roar"
+description: "A Rust port of Alliance for Open Media\'s Open Audio Renderer (OAR)."
+third_party {
+  version: "1.1.0"
+  license_type: NOTICE
+  last_upgrade_date {
+    year: 2026
+    month: 10
+    day: 30
+  }
+  homepage: "https://crates.io/crates/aom-roar"
+  identifier {
+    type: "crates.io"
+    value: "aom-roar"
+    version: "1.1.0"
+  }
+}

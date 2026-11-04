@@ -2,9 +2,12 @@
 
 [![Build Status]][github-ci] [![Coverage Status]][coveralls.io]
 [![Latest Version]][crates.io] [![docs]][docs.rs]
-[![Minimum Supported Rust Version]][Rust 1.68.2]
+[![Minimum Supported Rust Version]][Rust 1.85.0]
 
 A simple and fast 3D math library for games and graphics.
+
+> **glam is heading for 1.0.** `0.34.0` is the final breaking pre-1.0 release.
+> See [The road to glam 1.0](https://github.com/bitshifter/glam-rs/discussions/889).
 
 ## Features
 
@@ -41,7 +44,7 @@ A simple and fast 3D math library for games and graphics.
 * `usize` types
   * vectors: `USizeVec2`, `USizeVec3` and `USizeVec4`
 * `bool` types
-  * vectors: `BVec2`, `BVec3` and `BVec4`
+  * vectors: `BVec2`, `BVec3`, `BVec3A`, `BVec4` and `BVec4A`
 
 All types are enabled by default. Only `f32` and `bool` types are built-in.
 All other types are optional and can be disabled if not needed for faster
@@ -50,21 +53,16 @@ compile times.
 ### SIMD
 
 The `Vec3A`, `Vec4`, `Quat`, `Mat2`, `Mat3A`, `Mat4`, `Affine2` and `Affine3A`
-types use 128-bit wide SIMD vector types for storage on `x86`, `x86_64` and
+types use 128-bit wide SIMD vector types for storage on `x86`, `x86_64`, `aarch64` and
 `wasm32`/`wasm64` architectures.  As a result, these types are all 16 byte aligned and
 depending on the size of the type or the type's members, they may contain
 internal padding.  This results in some wasted space in the cases of `Vec3A`,
 `Mat3A`, `Affine2` and `Affine3A`.  However, the use of SIMD generally results
 in better performance than scalar math.
 
-`glam` outperforms similar Rust libraries for common operations as tested by the
-[`mathbench`][mathbench] project.
-
-[mathbench]: https://github.com/bitshifter/mathbench-rs
-
 ### Enabling SIMD
 
-SIMD is supported on `x86`, `x86_64`, `wasm32` and `wasm64` targets.
+SIMD is supported on `x86`, `x86_64`, `aarch64`, `wasm32` and `wasm64` targets.
 
 * `SSE2` is enabled by default on `x86_64` targets.
 * To enable `SSE2` on `x86` targets add `-C target-feature=+sse2` to
@@ -133,57 +131,71 @@ glam = { default-features = false, features = ["nostd-libm"] }
 * `f64`, `i8`, `i16`, `i32`, `i64`, `isize`, `u8`, `u16`, `u32`, `u64`, `usize`
   - enables glam types for the given intrinsic type
 * `nostd-libm` - uses `libm` math functions if `std` is not available
-* `scalar-math` - compiles with SIMD support disabled
+* `scalar-math` - disables SIMD support and uses native alignment for all types
 * `debug-glam-assert` - adds assertions in debug builds which check the validity
   of parameters passed to `glam` to help catch runtime errors
 * `glam-assert` - adds validation assertions to all builds
 * `cuda` - forces `glam` types to match expected [cuda alignment]
-* `fast-math` - **Deprecated.** This feature no longer has any effect and will
-  be removed in a future release.
 * `core-simd` - enables SIMD support via the [portable simd] module. This is an
   unstable feature which requires a nightly Rust toolchain and `std` support.
 
 [cuda alignment]: https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#built-in-vector-types
 
-### Optional features
+### Optional dependencies
 
-* [`approx`] - traits and macros for approximate float comparisons
+Pre-1.0 dependencies that appear in `glam`'s public API use versioned feature names
+(e.g. `rand-010`), so a new version can be added without a breaking change.
+
+* [`approx-05`] - `approx` 0.5 traits and macros for approximate float comparisons.
 * [`arbitrary`] - `arbitrary` trait implementations for `glam` types.
 * [`bytemuck`] - for casting into slices of bytes
-* [`encase`] - `encase` trait implementations for `glam` types.
+* [`encase-012`] - `encase` 0.12 trait implementations for `glam` types.
+* [`encase-013`] - `encase` 0.13 trait implementations for `glam` types.
 * [`float_eq`] - traits and macros for comparing float types using various tolerances.
 * [`libm`] - uses `libm` math functions instead of `std`
-* [`mint`] - for interoperating with other 3D math libraries
-* [`rand`] - implementations of `Distribution` trait for all `glam` types.
-* [`rkyv`] - implementations of `Archive`, `Serialize` and `Deserialize` for all
-  `glam` types. Note that serialization is not interoperable with and without
-  the `scalar-math` feature. It should work between all other builds of `glam`.
-  Endian conversion is currently not supported
-* [`bytecheck`] - to perform archive validation when using the `rkyv` feature
+* [`mint-05`] - `mint` 0.5 for interoperating with other 3D math libraries.
+* [`rand-010`] - `rand` 0.10 `Distribution` implementations for all `glam` types.
+* [`rkyv-08`] - `rkyv` 0.8 `Archive`, `Serialize` and `Deserialize` implementations
+  for all `glam` types, archiving to `glam::rkyv_08` types instead of the native type.
+* [`bytecheck`] - enables `rkyv`'s archive validation; only has an effect when
+  the `rkyv-08` feature is enabled
 * [`serde`] - implementations of `Serialize` and `Deserialize` for all `glam`
   types. Note that serialization should work between builds of `glam` with and
   without SIMD enabled
-* [`speedy`] - implementations of `speedy`'s `Readable` and `Writable` for all
+* [`speedy-08`] - `speedy` 0.8 implementations of `Readable` and `Writable` for all
   `glam` types.
-* [`zerocopy`] - implementations of zerocopy traits for safe transmutes.
+* [`zerocopy-08`] - `zerocopy` 0.8 implementations of zerocopy traits for safe
+  transmutes.
 
-[`approx`]: https://docs.rs/approx
+[`approx-05`]: https://docs.rs/approx/0.5
 [`arbitrary`]: https://docs.rs/arbitrary
 [`bytecheck`]: https://github.com/rkyv/bytecheck
 [`bytemuck`]: https://docs.rs/bytemuck
-[`encase`]: https://github.com/teoxoy/encase
+[`encase-012`]: https://docs.rs/encase/0.12
+[`encase-013`]: https://docs.rs/encase/0.13
 [`float_eq`]: https://docs.rs/float_eq
 [`libm`]: https://github.com/rust-lang/libm
-[`mint`]: https://github.com/kvark/mint
-[`rand`]: https://github.com/rust-random/rand
-[`rkyv`]: https://github.com/rkyv/rkyv
+[`mint-05`]: https://docs.rs/mint/0.5
+[`rand-010`]: https://docs.rs/rand/0.10
+[`rkyv-08`]: https://docs.rs/rkyv/0.8
 [`serde`]: https://serde.rs
-[`speedy`]: https://docs.rs/speedy
-[`zerocopy`]: https://github.com/google/zerocopy
+[`speedy-08`]: https://docs.rs/speedy/0.8
+[`zerocopy-08`]: https://docs.rs/zerocopy/0.8
 
 ### Minimum Supported Rust Version (MSRV)
 
-The minimum supported version of Rust for `glam` is `1.68.2`.
+The minimum supported version of Rust for `glam` is `1.85.0`.
+
+Raising the MSRV is treated as a non-breaking change, following Cargo's
+[semver guidance].
+
+`glam` itself and all of its features are expected to build with the MSRV
+unless otherwise documented. Optional dependencies are exempt, per Cargo's
+[support expectations]: they are not required to build with `glam`'s MSRV, so a
+feature that enables one may require a newer toolchain than `glam` itself.
+
+[semver guidance]: https://doc.rust-lang.org/cargo/reference/semver.html#env-new-rust
+[support expectations]: https://doc.rust-lang.org/cargo/reference/rust-version.html#support-expectations
 
 ## Conventions
 
@@ -225,7 +237,7 @@ performance.
 * Common functionality is benchmarked using [Criterion.rs] and [Gungraun]
 
 [Rust API Guidelines]: https://rust-lang-nursery.github.io/api-guidelines/
-[coverage]: coveralls.io
+[coverage]: https://coveralls.io/github/bitshifter/glam-rs?branch=main
 [Criterion.rs]: https://criterion-rs.github.io/book/index.html
 [Gungraun]: https://gungraun.github.io/gungraun/
 
@@ -315,5 +327,5 @@ See [ATTRIBUTION.md] for details.
 [crates.io]: https://crates.io/crates/glam/
 [docs]: https://docs.rs/glam/badge.svg
 [docs.rs]: https://docs.rs/glam/
-[Minimum Supported Rust Version]: https://img.shields.io/badge/Rust-1.68.2-blue?color=fc8d62&logo=rust
-[Rust 1.68.2]: https://github.com/rust-lang/rust/blob/master/RELEASES.md#version-1682-2023-03-28
+[Minimum Supported Rust Version]: https://img.shields.io/badge/Rust-1.85.0-blue?color=fc8d62&logo=rust
+[Rust 1.85.0]: https://github.com/rust-lang/rust/blob/master/RELEASES.md#version-1850-2025-02-20

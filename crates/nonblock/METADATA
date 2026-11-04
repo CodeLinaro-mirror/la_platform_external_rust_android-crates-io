@@ -1,0 +1,17 @@
+name: "nonblock"
+description: "Read available data from file descriptors without blocking (e.g. sockets, streams, child stdout, named pipes)"
+third_party {
+  version: "0.2.0"
+  license_type: NOTICE
+  last_upgrade_date {
+    year: 2026
+    month: 10
+    day: 27
+  }
+  homepage: "https://crates.io/crates/nonblock"
+  identifier {
+    type: "crates.io"
+    value: "nonblock"
+    version: "0.2.0"
+  }
+}

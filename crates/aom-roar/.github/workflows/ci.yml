@@ -1,0 +1,67 @@
+name: Build and Run Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cargo-test:
+    name: cargo test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run cargo test
+        run: cargo test --locked
+
+      - name: Run cargo publish dry-run
+        run: cargo publish --dry-run --locked
+
+  bazel-test:
+    name: bazelisk test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      # Persist downloaded external repositories (toolchains, crates, C++ deps) and compiled build
+      # artifacts across ephemeral GitHub Actions VMs.
+      - name: Restore and save Bazel cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/bazel-repo
+            ~/.cache/bazel-disk
+          # Exact cache key tied to the runner platform and hashes of build/dependency configuration
+          # files; a new cache entry is saved when any of these change.
+          key: bazel-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.bazelrc', '.bazelversion', 'MODULE.bazel', 'Cargo.toml', 'Cargo.lock') }}
+          # Prefix fallback used when the exact key misses (e.g., after updating deps), restoring
+          # the most recent cache for this OS/architecture for an incremental build.
+          restore-keys: |
+            bazel-cache-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Configure Bazel cache
+        run: |
+          echo "common --repository_cache=~/.cache/bazel-repo" >> .bazelrc
+          echo "build --disk_cache=~/.cache/bazel-disk" >> .bazelrc
+
+      - name: Run bazelisk test
+        run: bazelisk test -c opt --test_output=errors //src/... //tests/...

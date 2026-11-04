@@ -5,6 +5,7 @@
     "std",
     "log",
     "medium-ethernet",
+    "proto-dhcpv4",
     "proto-ipv4",
     "socket-tcp",
     "socket-udp",

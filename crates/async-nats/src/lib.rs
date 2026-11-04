@@ -1275,13 +1275,20 @@ impl From<io::Error> for ConnectError {
 /// Retrieves messages from given `subscription` created by [Client::subscribe].
 ///
 /// Implements [futures_util::stream::Stream] for ergonomic async message processing.
+/// For deterministic cleanup, prefer calling [`Subscriber::unsubscribe`] or
+/// [`Subscriber::drain`]. Dropping a [`Subscriber`] is best-effort.
 ///
 /// # Examples
-/// ```
+/// ```no_run
+/// # use futures_util::StreamExt;
 /// # #[tokio::main]
 /// # async fn main() ->  Result<(), async_nats::Error> {
-/// let mut nc = async_nats::connect("demo.nats.io").await?;
-/// # nc.publish("test", "data".into()).await?;
+/// let client = async_nats::connect("demo.nats.io").await?;
+/// let mut subscriber = client.subscribe("events.>").await?;
+///
+/// while let Some(message) = subscriber.next().await {
+///     println!("received: {message:?}");
+/// }
 /// # Ok(())
 /// # }
 /// ```
@@ -1308,7 +1315,7 @@ impl Subscriber {
     /// Unsubscribes from subscription, draining all remaining messages.
     ///
     /// # Examples
-    /// ```
+    /// ```no_run
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), async_nats::Error> {
     /// let client = async_nats::connect("demo.nats.io").await?;
@@ -1319,6 +1326,9 @@ impl Subscriber {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// This method is the reliable unsubscribe path: it waits for the command to be accepted by
+    /// the client's command channel. Dropping [`Subscriber`] is best-effort.
     pub async fn unsubscribe(&mut self) -> Result<(), UnsubscribeError> {
         self.sender
             .send(Command::Unsubscribe {
@@ -1331,11 +1341,11 @@ impl Subscriber {
     }
 
     /// Unsubscribes from subscription after reaching given number of messages.
-    /// This is the total number of messages received by this subscription in it's whole
+    /// This is the total number of messages received by this subscription in its whole
     /// lifespan. If it already reached or surpassed the passed value, it will immediately stop.
     ///
     /// # Examples
-    /// ```
+    /// ```no_run
     /// # use futures_util::StreamExt;
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), async_nats::Error> {
@@ -1418,19 +1428,37 @@ impl From<tokio::sync::mpsc::error::SendError<Command>> for UnsubscribeError {
     }
 }
 
+#[inline]
+fn drop_unsubscribe_command(sid: u64) -> Command {
+    Command::Unsubscribe { sid, max: None }
+}
+
 impl Drop for Subscriber {
     fn drop(&mut self) {
         self.receiver.close();
-        tokio::spawn({
-            let sender = self.sender.clone();
-            let sid = self.sid;
-            async move {
-                sender
-                    .send(Command::Unsubscribe { sid, max: None })
-                    .await
-                    .ok();
+        // Best-effort unsubscribe. `Drop` can run outside a Tokio runtime (unwinding, teardown,
+        // plain threads), so start with synchronous `try_send` and only spawn an async retry when
+        // the command channel is full and a runtime is available.
+        match self.sender.try_send(drop_unsubscribe_command(self.sid)) {
+            Ok(()) => {}
+            Err(tokio::sync::mpsc::error::TrySendError::Full(command)) => {
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    let sender = self.sender.clone();
+                    handle.spawn(async move {
+                        if let Err(err) = sender.send(command).await {
+                            debug!("failed to send unsubscribe in Subscriber::drop: {err}");
+                        }
+                    });
+                } else {
+                    debug!(
+                        "failed to send unsubscribe in Subscriber::drop: command channel full and no runtime"
+                    );
+                }
             }
-        });
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                debug!("failed to send unsubscribe in Subscriber::drop: command channel closed");
+            }
+        }
     }
 }
 
@@ -1516,7 +1544,7 @@ impl std::fmt::Display for ServerError {
 }
 
 /// Info to construct a CONNECT message.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Serialize)]
 pub struct ConnectInfo {
     /// Turns on +OK protocol acknowledgments.
     pub verbose: bool,
@@ -1574,6 +1602,52 @@ pub struct ConnectInfo {
 
     /// Whether the client supports no_responders.
     pub no_responders: bool,
+}
+
+/// `Debug` implementation that redacts secrets (password, token, JWT and
+/// nonce signature) to prevent credential leaks in logs.
+impl fmt::Debug for ConnectInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fn redact(secret: &Option<String>) -> Option<&'static str> {
+            secret.as_ref().map(|_| "XXXXXXXX")
+        }
+        let ConnectInfo {
+            verbose,
+            pedantic,
+            user_jwt,
+            nkey,
+            signature,
+            name,
+            echo,
+            lang,
+            version,
+            protocol,
+            tls_required,
+            user,
+            pass,
+            auth_token,
+            headers,
+            no_responders,
+        } = self;
+        f.debug_struct("ConnectInfo")
+            .field("verbose", verbose)
+            .field("pedantic", pedantic)
+            .field("user_jwt", &redact(user_jwt))
+            .field("nkey", nkey)
+            .field("signature", &redact(signature))
+            .field("name", name)
+            .field("echo", echo)
+            .field("lang", lang)
+            .field("version", version)
+            .field("protocol", protocol)
+            .field("tls_required", tls_required)
+            .field("user", user)
+            .field("pass", &redact(pass))
+            .field("auth_token", &redact(auth_token))
+            .field("headers", headers)
+            .field("no_responders", no_responders)
+            .finish()
+    }
 }
 
 /// Protocol version used by the client.
@@ -1839,6 +1913,38 @@ use crate::message::OutboundMessage;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::mpsc;
+    use tokio::sync::mpsc::error::TryRecvError;
+    use tokio::time::{timeout, Duration};
+
+    #[test]
+    fn connect_info_debug_redacts_secrets() {
+        let connect_info = ConnectInfo {
+            verbose: false,
+            pedantic: false,
+            user_jwt: Some("secret-jwt".into()),
+            nkey: Some("public-nkey".into()),
+            signature: Some("secret-signature".into()),
+            name: None,
+            echo: true,
+            lang: "rust".into(),
+            version: "1.0.0".into(),
+            protocol: Protocol::Dynamic,
+            tls_required: false,
+            user: Some("derek".into()),
+            pass: Some("s3cr3t!".into()),
+            auth_token: Some("secret-token".into()),
+            headers: true,
+            no_responders: true,
+        };
+        let output = format!("{connect_info:?}");
+        assert!(!output.contains("secret-jwt"));
+        assert!(!output.contains("secret-signature"));
+        assert!(!output.contains("s3cr3t!"));
+        assert!(!output.contains("secret-token"));
+        assert!(output.contains("public-nkey"));
+        assert!(output.contains("derek"));
+    }
 
     #[test]
     fn server_address_ipv6() {
@@ -1928,5 +2034,81 @@ mod tests {
             let mut addrs_iter = arr.to_server_addrs().unwrap();
             assert_eq!(addrs_iter.next().unwrap().port(), expected_port);
         }
+    }
+
+    #[tokio::test]
+    async fn drop_subscriber_in_runtime_full_command_channel_eventually_unsubscribes() {
+        let sid = 42;
+        let (sender, mut receiver) = mpsc::channel(1);
+        sender.try_send(Command::Reconnect).unwrap();
+
+        let (_message_sender, message_receiver) = mpsc::channel(1);
+        let subscriber = Subscriber::new(sid, sender, message_receiver);
+        drop(subscriber);
+
+        assert!(matches!(receiver.recv().await, Some(Command::Reconnect)));
+        assert!(matches!(
+            timeout(Duration::from_secs(1), receiver.recv()).await.unwrap(),
+            Some(Command::Unsubscribe {
+                sid: recv_sid,
+                max: None
+            }) if recv_sid == sid
+        ));
+    }
+
+    #[test]
+    fn drop_subscriber_outside_runtime_open_command_channel_sends_unsubscribe() {
+        let sid = 17;
+        let (sender, mut receiver) = mpsc::channel(1);
+
+        let (_message_sender, message_receiver) = mpsc::channel(1);
+        let subscriber = Subscriber::new(sid, sender, message_receiver);
+        drop(subscriber);
+
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(Command::Unsubscribe {
+                sid: recv_sid,
+                max: None
+            }) if recv_sid == sid
+        ));
+    }
+
+    #[test]
+    fn drop_subscriber_outside_runtime_full_command_channel_is_best_effort() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        sender.try_send(Command::Reconnect).unwrap();
+
+        let (_message_sender, message_receiver) = mpsc::channel(1);
+        let subscriber = Subscriber::new(7, sender, message_receiver);
+        drop(subscriber);
+
+        assert!(matches!(receiver.try_recv(), Ok(Command::Reconnect)));
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn drop_subscriber_outside_runtime_closed_command_channel_does_not_panic() {
+        let (sender, receiver) = mpsc::channel(1);
+        drop(receiver);
+
+        let (_message_sender, message_receiver) = mpsc::channel(1);
+        let subscriber = Subscriber::new(9, sender, message_receiver);
+        drop(subscriber);
+    }
+
+    #[tokio::test]
+    async fn drop_subscriber_in_runtime_closed_command_channel_does_not_panic() {
+        let (sender, receiver) = mpsc::channel(1);
+        drop(receiver);
+
+        let (_message_sender, message_receiver) = mpsc::channel(1);
+        let subscriber = Subscriber::new(11, sender, message_receiver);
+        drop(subscriber);
+
+        tokio::task::yield_now().await;
     }
 }

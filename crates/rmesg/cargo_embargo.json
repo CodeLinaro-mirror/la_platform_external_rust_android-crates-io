@@ -1,0 +1,20 @@
+{
+  "features": [
+    "extra-traits",
+    "sync"
+  ],
+  "min_sdk_version": "29",
+  "module_blocklist": [
+    "rmesg"
+  ],
+  "package": {
+    "rmesg": {
+      "dep_blocklist": [
+        "libclap",
+        "libenum_display_derive",
+        "libnum"
+      ]
+    }
+  },
+  "run_cargo": false
+}

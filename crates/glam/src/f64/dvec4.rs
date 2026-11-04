@@ -2,7 +2,7 @@
 
 #[cfg(not(feature = "scalar-math"))]
 use crate::BVec4A;
-use crate::{f64::math, BVec4, DVec2, DVec3};
+use crate::{BVec4, DVec2, DVec3, f64::math};
 
 use crate::Vec4;
 
@@ -16,8 +16,8 @@ use core::fmt;
 use core::iter::{Product, Sum};
 use core::ops::*;
 
-#[cfg(feature = "zerocopy")]
-use zerocopy_derive::*;
+#[cfg(feature = "zerocopy-08")]
+use zerocopy_derive_08::*;
 
 /// Creates a 4-dimensional vector.
 #[inline(always)]
@@ -30,7 +30,7 @@ pub const fn dvec4(x: f64, y: f64, z: f64, w: f64) -> DVec4 {
 #[derive(Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "bytemuck", derive(bytemuck::Pod, bytemuck::Zeroable))]
 #[cfg_attr(
-    feature = "zerocopy",
+    feature = "zerocopy-08",
     derive(FromBytes, Immutable, IntoBytes, KnownLayout)
 )]
 #[cfg_attr(feature = "cuda", repr(align(16)))]
@@ -105,8 +105,6 @@ impl DVec4 {
     pub const USES_SSE2: bool = false;
     /// DVec4 uses WebAssembly 128-bit SIMD
     pub const USES_WASM_SIMD: bool = false;
-    #[deprecated(since = "0.31.0", note = "Renamed to USES_WASM_SIMD")]
-    pub const USES_WASM32_SIMD: bool = false;
 
     /// Creates a new vector.
     #[inline(always)]
@@ -169,6 +167,7 @@ impl DVec4 {
     /// Panics if `slice` is less than 4 elements long.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub const fn from_slice(slice: &[f64]) -> Self {
         assert!(slice.len() >= 4);
         Self::new(slice[0], slice[1], slice[2], slice[3])
@@ -180,6 +179,7 @@ impl DVec4 {
     ///
     /// Panics if `slice` is less than 4 elements long.
     #[inline]
+    #[track_caller]
     pub fn write_to_slice(self, slice: &mut [f64]) {
         slice[..4].copy_from_slice(&self.to_array());
     }
@@ -201,6 +201,7 @@ impl DVec4 {
     /// Will panic if `self.w` is `0` when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn project(self) -> DVec3 {
         DVec3::from_homogeneous(self)
     }
@@ -297,6 +298,7 @@ impl DVec4 {
     /// Will panic if `min` is greater than `max` when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn clamp(self, min: Self, max: Self) -> Self {
         glam_assert!(min.cmple(max).all(), "clamp: expected min <= max");
         self.max(min).min(max)
@@ -488,12 +490,7 @@ impl DVec4 {
     #[inline]
     #[must_use]
     pub fn abs(self) -> Self {
-        Self::new(
-            math::abs(self.x),
-            math::abs(self.y),
-            math::abs(self.z),
-            math::abs(self.w),
-        )
+        Self::new(self.x.abs(), self.y.abs(), self.z.abs(), self.w.abs())
     }
 
     /// Returns a vector with elements representing the sign of `self`.
@@ -505,10 +502,10 @@ impl DVec4 {
     #[must_use]
     pub fn signum(self) -> Self {
         Self::new(
-            math::signum(self.x),
-            math::signum(self.y),
-            math::signum(self.z),
-            math::signum(self.w),
+            self.x.signum(),
+            self.y.signum(),
+            self.z.signum(),
+            self.w.signum(),
         )
     }
 
@@ -517,10 +514,10 @@ impl DVec4 {
     #[must_use]
     pub fn copysign(self, rhs: Self) -> Self {
         Self::new(
-            math::copysign(self.x, rhs.x),
-            math::copysign(self.y, rhs.y),
-            math::copysign(self.z, rhs.z),
-            math::copysign(self.w, rhs.w),
+            self.x.copysign(rhs.x),
+            self.y.copysign(rhs.y),
+            self.z.copysign(rhs.z),
+            self.w.copysign(rhs.w),
         )
     }
 
@@ -682,6 +679,7 @@ impl DVec4 {
     /// Will panic if the resulting normalized vector is not finite when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn normalize(self) -> Self {
         #[allow(clippy::let_and_return)]
         let normalized = self.mul(self.length_recip());
@@ -757,7 +755,7 @@ impl DVec4 {
     #[inline]
     #[must_use]
     pub fn is_normalized(self) -> bool {
-        math::abs(self.length_squared() - 1.0) <= 2e-4
+        (self.length_squared() - 1.0).abs() <= 2e-4
     }
 
     /// Returns the vector projection of `self` onto `rhs`.
@@ -769,10 +767,11 @@ impl DVec4 {
     /// Will panic if `rhs` is zero length when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn project_onto(self, rhs: Self) -> Self {
-        let other_len_sq_rcp = 1.0 / rhs.dot(rhs);
-        glam_assert!(other_len_sq_rcp.is_finite());
-        rhs * self.dot(rhs) * other_len_sq_rcp
+        let rhs_len_sq = rhs.dot(rhs);
+        glam_assert!(rhs_len_sq != 0.0);
+        rhs * (self.dot(rhs) / rhs_len_sq)
     }
 
     /// Returns the vector rejection of `self` from `rhs`.
@@ -788,6 +787,7 @@ impl DVec4 {
     #[doc(alias("plane"))]
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn reject_from(self, rhs: Self) -> Self {
         self - self.project_onto(rhs)
     }
@@ -801,6 +801,7 @@ impl DVec4 {
     /// Will panic if `rhs` is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn project_onto_normalized(self, rhs: Self) -> Self {
         glam_assert!(rhs.is_normalized());
         rhs * self.dot(rhs)
@@ -819,6 +820,7 @@ impl DVec4 {
     #[doc(alias("plane"))]
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn reject_from_normalized(self, rhs: Self) -> Self {
         self - self.project_onto_normalized(rhs)
     }
@@ -896,6 +898,7 @@ impl DVec4 {
     /// of `edge1`, when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn smoothstep(self, edge0: Self, edge1: Self) -> Self {
         glam_assert!(edge0.cmplt(edge1).all());
         let t = ((self - edge0) / (edge1 - edge0)).saturate();
@@ -1055,16 +1058,45 @@ impl DVec4 {
         Self::new(1.0 / self.x, 1.0 / self.y, 1.0 / self.z, 1.0 / self.w)
     }
 
-    /// Performs a linear interpolation between `self` and `rhs` based on the value `s`.
+    /// Performs a linear interpolation between `self` and `rhs` based on the value `s`, using the
+    /// form `self * (1.0 - s) + rhs * s`.
     ///
-    /// When `s` is `0.0`, the result will be equal to `self`.  When `s` is `1.0`, the result
-    /// will be equal to `rhs`. When `s` is outside of range `[0, 1]`, the result is linearly
+    /// When `s` is `0.0`, the result will be equal to `self`. When `s` is `1.0`, the result will
+    /// be equal to `rhs`. When `s` is outside of the range `[0, 1]`, the result is linearly
     /// extrapolated.
+    ///
+    /// The result is guaranteed to be `self` at `s == 0.0` and `rhs` at `s == 1.0`, even when the
+    /// values differ greatly in magnitude, but it is not monotonic in `s` for nearly equal inputs
+    /// and may not preserve equal inputs exactly. Consider [`lerp_monotonic`](Self::lerp_monotonic)
+    /// instead when interpolating between values that may be equal or nearly equal.
     #[doc(alias = "mix")]
     #[inline]
     #[must_use]
     pub fn lerp(self, rhs: Self, s: f64) -> Self {
         self * (1.0 - s) + rhs * s
+    }
+
+    /// Performs a linear interpolation between `self` and `rhs` based on the value `s`, using the
+    /// monotonic form `self + (rhs - self) * s`.
+    ///
+    /// When `s` is `0.0`, the result will be equal to `self`. When `s` is `1.0`, the result will
+    /// be equal to `rhs`. When `s` is outside of the range `[0, 1]`, the result is linearly
+    /// extrapolated.
+    ///
+    /// Prefer this over [`lerp`](Self::lerp) when interpolating between values that may be equal or
+    /// nearly equal: the result is monotonic in `s` and equal inputs are preserved exactly, avoiding
+    /// the rounding jitter that [`lerp`](Self::lerp) can introduce. The tradeoff is that
+    /// `rhs - self` is evaluated first, so this is less accurate than [`lerp`](Self::lerp) when
+    /// `self` and `rhs` differ greatly in magnitude, and overflows to infinity when they have
+    /// opposite signs and large magnitudes.
+    ///
+    /// On SIMD back-ends the multiply and add are fused when the target supports it, which has a
+    /// single rounding step and can be more accurate than a separate multiply and add.
+    #[doc(alias = "mix")]
+    #[inline]
+    #[must_use]
+    pub fn lerp_monotonic(self, rhs: Self, s: f64) -> Self {
+        self + (rhs - self) * s
     }
 
     /// Moves towards `rhs` based on the value `d`.
@@ -1114,6 +1146,7 @@ impl DVec4 {
     /// Will panic if `min` is greater than `max`, or if either `min` or `max` is negative, when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn clamp_length(self, min: f64, max: f64) -> Self {
         glam_assert!(0.0 <= min);
         glam_assert!(min <= max);
@@ -1134,6 +1167,7 @@ impl DVec4 {
     /// Will panic if `max` is negative when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn clamp_length_max(self, max: f64) -> Self {
         glam_assert!(0.0 <= max);
         let length_sq = self.length_squared();
@@ -1151,6 +1185,7 @@ impl DVec4 {
     /// Will panic if `min` is negative when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn clamp_length_min(self, min: f64) -> Self {
         glam_assert!(0.0 <= min);
         let length_sq = self.length_squared();
@@ -1189,6 +1224,7 @@ impl DVec4 {
     /// Will panic if `normal` is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn reflect(self, normal: Self) -> Self {
         glam_assert!(normal.is_normalized());
         self - 2.0 * self.dot(normal) * normal
@@ -1205,6 +1241,7 @@ impl DVec4 {
     /// Will panic if `self` or `normal` is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn refract(self, normal: Self, eta: f64) -> Self {
         glam_assert!(self.is_normalized());
         glam_assert!(normal.is_normalized());
@@ -2120,6 +2157,7 @@ impl Neg for &DVec4 {
 impl Index<usize> for DVec4 {
     type Output = f64;
     #[inline]
+    #[track_caller]
     fn index(&self, index: usize) -> &Self::Output {
         match index {
             0 => &self.x,
@@ -2133,6 +2171,7 @@ impl Index<usize> for DVec4 {
 
 impl IndexMut<usize> for DVec4 {
     #[inline]
+    #[track_caller]
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         match index {
             0 => &mut self.x,

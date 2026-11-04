@@ -1,17 +1,17 @@
 name: "rstest_macros"
 description: "Rust fixture based test framework. It use procedural macro to implement fixtures and table based tests."
 third_party {
-  version: "0.27.0"
+  version: "0.28.0"
   license_type: NOTICE
   last_upgrade_date {
     year: 2026
-    month: 9
-    day: 23
+    month: 10
+    day: 28
   }
   homepage: "https://crates.io/crates/rstest_macros"
   identifier {
     type: "crates.io"
     value: "rstest_macros"
-    version: "0.27.0"
+    version: "0.28.0"
   }
 }

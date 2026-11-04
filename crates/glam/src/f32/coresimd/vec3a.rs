@@ -1,6 +1,6 @@
 // Generated from vec.rs.tera template. Edit the template, not the generated file.
 
-use crate::{coresimd::*, f32::math, BVec3, BVec3A, FloatExt, Quat, Vec2, Vec3, Vec4};
+use crate::{BVec3, BVec3A, FloatExt, Quat, Vec2, Vec3, Vec4, coresimd::*, f32::math};
 
 use core::fmt;
 use core::iter::{Product, Sum};
@@ -86,8 +86,6 @@ impl Vec3A {
     pub const USES_SSE2: bool = false;
     /// Vec3A uses WebAssembly 128-bit SIMD
     pub const USES_WASM_SIMD: bool = false;
-    #[deprecated(since = "0.31.0", note = "Renamed to USES_WASM_SIMD")]
-    pub const USES_WASM32_SIMD: bool = false;
 
     /// Creates a new vector.
     #[inline(always)]
@@ -145,6 +143,7 @@ impl Vec3A {
     /// Panics if `slice` is less than 3 elements long.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub const fn from_slice(slice: &[f32]) -> Self {
         assert!(slice.len() >= 3);
         Self::new(slice[0], slice[1], slice[2])
@@ -156,6 +155,7 @@ impl Vec3A {
     ///
     /// Panics if `slice` is less than 3 elements long.
     #[inline]
+    #[track_caller]
     pub fn write_to_slice(self, slice: &mut [f32]) {
         slice[..3].copy_from_slice(&self.to_array());
     }
@@ -193,6 +193,7 @@ impl Vec3A {
     /// Will panic if `v.w` is `0` when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn from_homogeneous(v: Vec4) -> Self {
         glam_assert!(v.w != 0.0);
         Self::from_vec4(v) / v.w
@@ -298,6 +299,7 @@ impl Vec3A {
     /// Will panic if `min` is greater than `max` when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn clamp(self, min: Self, max: Self) -> Self {
         glam_assert!(min.cmple(max).all(), "clamp: expected min <= max");
         self.max(min).min(max)
@@ -616,6 +618,7 @@ impl Vec3A {
     /// Will panic if the resulting normalized vector is not finite when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn normalize(self) -> Self {
         #[allow(clippy::let_and_return)]
         let normalized = self.mul(self.length_recip());
@@ -691,7 +694,7 @@ impl Vec3A {
     #[inline]
     #[must_use]
     pub fn is_normalized(self) -> bool {
-        math::abs(self.length_squared() - 1.0) <= 2e-4
+        (self.length_squared() - 1.0).abs() <= 2e-4
     }
 
     /// Returns the vector projection of `self` onto `rhs`.
@@ -703,10 +706,11 @@ impl Vec3A {
     /// Will panic if `rhs` is zero length when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn project_onto(self, rhs: Self) -> Self {
-        let other_len_sq_rcp = 1.0 / rhs.dot(rhs);
-        glam_assert!(other_len_sq_rcp.is_finite());
-        rhs * self.dot(rhs) * other_len_sq_rcp
+        let rhs_len_sq = rhs.dot(rhs);
+        glam_assert!(rhs_len_sq != 0.0);
+        rhs * (self.dot(rhs) / rhs_len_sq)
     }
 
     /// Returns the vector rejection of `self` from `rhs`.
@@ -722,6 +726,7 @@ impl Vec3A {
     #[doc(alias("plane"))]
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn reject_from(self, rhs: Self) -> Self {
         self - self.project_onto(rhs)
     }
@@ -735,6 +740,7 @@ impl Vec3A {
     /// Will panic if `rhs` is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn project_onto_normalized(self, rhs: Self) -> Self {
         glam_assert!(rhs.is_normalized());
         rhs * self.dot(rhs)
@@ -753,6 +759,7 @@ impl Vec3A {
     #[doc(alias("plane"))]
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn reject_from_normalized(self, rhs: Self) -> Self {
         self - self.project_onto_normalized(rhs)
     }
@@ -810,6 +817,7 @@ impl Vec3A {
     /// of `edge1`, when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn smoothstep(self, edge0: Self, edge1: Self) -> Self {
         glam_assert!(edge0.cmplt(edge1).all());
         let t = ((self - edge0) / (edge1 - edge0)).saturate();
@@ -932,16 +940,45 @@ impl Vec3A {
         Self(self.0.recip())
     }
 
-    /// Performs a linear interpolation between `self` and `rhs` based on the value `s`.
+    /// Performs a linear interpolation between `self` and `rhs` based on the value `s`, using the
+    /// form `self * (1.0 - s) + rhs * s`.
     ///
-    /// When `s` is `0.0`, the result will be equal to `self`.  When `s` is `1.0`, the result
-    /// will be equal to `rhs`. When `s` is outside of range `[0, 1]`, the result is linearly
+    /// When `s` is `0.0`, the result will be equal to `self`. When `s` is `1.0`, the result will
+    /// be equal to `rhs`. When `s` is outside of the range `[0, 1]`, the result is linearly
     /// extrapolated.
+    ///
+    /// The result is guaranteed to be `self` at `s == 0.0` and `rhs` at `s == 1.0`, even when the
+    /// values differ greatly in magnitude, but it is not monotonic in `s` for nearly equal inputs
+    /// and may not preserve equal inputs exactly. Consider [`lerp_monotonic`](Self::lerp_monotonic)
+    /// instead when interpolating between values that may be equal or nearly equal.
     #[doc(alias = "mix")]
     #[inline]
     #[must_use]
     pub fn lerp(self, rhs: Self, s: f32) -> Self {
         self * (1.0 - s) + rhs * s
+    }
+
+    /// Performs a linear interpolation between `self` and `rhs` based on the value `s`, using the
+    /// monotonic form `self + (rhs - self) * s`.
+    ///
+    /// When `s` is `0.0`, the result will be equal to `self`. When `s` is `1.0`, the result will
+    /// be equal to `rhs`. When `s` is outside of the range `[0, 1]`, the result is linearly
+    /// extrapolated.
+    ///
+    /// Prefer this over [`lerp`](Self::lerp) when interpolating between values that may be equal or
+    /// nearly equal: the result is monotonic in `s` and equal inputs are preserved exactly, avoiding
+    /// the rounding jitter that [`lerp`](Self::lerp) can introduce. The tradeoff is that
+    /// `rhs - self` is evaluated first, so this is less accurate than [`lerp`](Self::lerp) when
+    /// `self` and `rhs` differ greatly in magnitude, and overflows to infinity when they have
+    /// opposite signs and large magnitudes.
+    ///
+    /// On SIMD back-ends the multiply and add are fused when the target supports it, which has a
+    /// single rounding step and can be more accurate than a separate multiply and add.
+    #[doc(alias = "mix")]
+    #[inline]
+    #[must_use]
+    pub fn lerp_monotonic(self, rhs: Self, s: f32) -> Self {
+        self + (rhs - self) * s
     }
 
     /// Moves towards `rhs` based on the value `d`.
@@ -991,6 +1028,7 @@ impl Vec3A {
     /// Will panic if `min` is greater than `max`, or if either `min` or `max` is negative, when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn clamp_length(self, min: f32, max: f32) -> Self {
         glam_assert!(0.0 <= min);
         glam_assert!(min <= max);
@@ -1011,6 +1049,7 @@ impl Vec3A {
     /// Will panic if `max` is negative when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn clamp_length_max(self, max: f32) -> Self {
         glam_assert!(0.0 <= max);
         let length_sq = self.length_squared();
@@ -1028,6 +1067,7 @@ impl Vec3A {
     /// Will panic if `min` is negative when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn clamp_length_min(self, min: f32) -> Self {
         glam_assert!(0.0 <= min);
         let length_sq = self.length_squared();
@@ -1061,6 +1101,7 @@ impl Vec3A {
     /// Will panic if `normal` is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn reflect(self, normal: Self) -> Self {
         glam_assert!(normal.is_normalized());
         self - 2.0 * self.dot(normal) * normal
@@ -1077,6 +1118,7 @@ impl Vec3A {
     /// Will panic if `self` or `normal` is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn refract(self, normal: Self, eta: f32) -> Self {
         glam_assert!(self.is_normalized());
         glam_assert!(normal.is_normalized());
@@ -1101,6 +1143,7 @@ impl Vec3A {
     /// Will panic if `self` or `rhs` has zero length when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn angle_between(self, rhs: Self) -> f32 {
         glam_assert!(self.is_non_zero());
         glam_assert!(rhs.is_non_zero());
@@ -1128,6 +1171,7 @@ impl Vec3A {
     #[doc(alias = "signed_angle")]
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn angle_to(self, rhs: Self, axis: Self) -> f32 {
         glam_assert!(axis.is_normalized());
         glam_assert!(self.is_non_zero());
@@ -1180,6 +1224,7 @@ impl Vec3A {
     /// Will panic if `axis` is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn rotate_axis(self, axis: Self, angle: f32) -> Self {
         Quat::from_axis_angle(axis.into(), angle) * self
     }
@@ -1189,8 +1234,13 @@ impl Vec3A {
     /// When `max_angle` is `0.0`, the result will be equal to `self`. When `max_angle` is equal to
     /// `self.angle_between(rhs)`, the result will be parallel to `rhs`. If `max_angle` is negative,
     /// rotates towards the exact opposite of `rhs`. Will not go past the target.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `self` or `rhs` are zero length when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn rotate_towards(self, rhs: Self, max_angle: f32) -> Self {
         let angle_between = self.angle_between(rhs);
         // When `max_angle < 0`, rotate no further than `PI` radians away
@@ -1212,7 +1262,7 @@ impl Vec3A {
     #[must_use]
     pub fn any_orthogonal_vector(self) -> Self {
         // This can probably be optimized
-        if math::abs(self.x) > math::abs(self.y) {
+        if self.x.abs() > self.y.abs() {
             Self::new(-self.z, 0.0, self.x) // self.cross(Self::Y)
         } else {
             Self::new(0.0, self.z, -self.y) // self.cross(Self::X)
@@ -1228,10 +1278,11 @@ impl Vec3A {
     /// Will panic if `self` is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn any_orthonormal_vector(self) -> Self {
         glam_assert!(self.is_normalized());
         // From https://graphics.pixar.com/library/OrthonormalB/paper.pdf
-        let sign = math::signum(self.z);
+        let sign = self.z.signum();
         let a = -1.0 / (sign + self.z);
         let b = self.x * self.y * a;
         Self::new(b, sign + self.y * self.y * a, -self.y)
@@ -1245,10 +1296,11 @@ impl Vec3A {
     /// Will panic if `self` is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn any_orthonormal_pair(self) -> (Self, Self) {
         glam_assert!(self.is_normalized());
         // From https://graphics.pixar.com/library/OrthonormalB/paper.pdf
-        let sign = math::signum(self.z);
+        let sign = self.z.signum();
         let a = -1.0 / (sign + self.z);
         let b = self.x * self.y * a;
         (
@@ -1262,15 +1314,22 @@ impl Vec3A {
     /// When `s` is `0.0`, the result will be equal to `self`.  When `s` is `1.0`, the result
     /// will be equal to `rhs`. When `s` is outside of range `[0, 1]`, the result is linearly
     /// extrapolated.
+    ///
+    /// # Panics
+    ///
+    /// Will panic if `self` or `rhs` has zero length when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn slerp(self, rhs: Self, s: f32) -> Self {
+        glam_assert!(self.is_non_zero());
+        glam_assert!(rhs.is_non_zero());
         let self_length = self.length();
         let rhs_length = rhs.length();
         // Cosine of the angle between the vectors [-1, 1], or NaN if either vector has a zero length
         let dot = self.dot(rhs) / (self_length * rhs_length);
         // If dot is close to 1 or -1, or is NaN the calculations for t1 and t2 break down
-        if math::abs(dot) < 1.0 - 3e-7 {
+        if dot.abs() < 1.0 - 3e-7 {
             // Angle between the vectors [0, +π]
             let theta = math::acos_approx(dot);
             // Sine of the angle between vectors [0, 1]
@@ -1278,8 +1337,8 @@ impl Vec3A {
             let t1 = math::sin(theta * (1.0 - s));
             let t2 = math::sin(theta * s);
 
-            // Interpolate vector lengths
-            let result_length = self_length.lerp(rhs_length, s);
+            // Interpolate vector lengths. The monotonic form keeps equal lengths exact.
+            let result_length = self_length.lerp_monotonic(rhs_length, s);
             // Scale the vectors to the target length and interpolate them
             return (self * (result_length / self_length) * t1
                 + rhs * (result_length / rhs_length) * t2)
@@ -1291,8 +1350,8 @@ impl Vec3A {
             // Create a rotation from self to rhs along some axis
             let axis = self.any_orthogonal_vector().normalize().into();
             let rotation = Quat::from_axis_angle(axis, core::f32::consts::PI * s);
-            // Interpolate vector lengths
-            let result_length = self_length.lerp(rhs_length, s);
+            // Interpolate vector lengths. The monotonic form keeps equal lengths exact.
+            let result_length = self_length.lerp_monotonic(rhs_length, s);
             rotation * self * (result_length / self_length)
         } else {
             // Vectors are almost parallel in the same direction, or dot was NaN
@@ -2096,6 +2155,7 @@ impl Neg for &Vec3A {
 impl Index<usize> for Vec3A {
     type Output = f32;
     #[inline]
+    #[track_caller]
     fn index(&self, index: usize) -> &Self::Output {
         &self.0[index]
     }
@@ -2103,6 +2163,7 @@ impl Index<usize> for Vec3A {
 
 impl IndexMut<usize> for Vec3A {
     #[inline]
+    #[track_caller]
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.0[index]
     }

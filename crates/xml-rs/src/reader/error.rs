@@ -218,6 +218,15 @@ impl From<io::Error> for Error {
     }
 }
 
+impl From<ErrorKind> for Error {
+    fn from(kind: ErrorKind) -> Self {
+        Error {
+            pos: TextPosition::new(),
+            kind,
+        }
+    }
+}
+
 impl Clone for ErrorKind {
     #[cold]
     fn clone(&self) -> Self {

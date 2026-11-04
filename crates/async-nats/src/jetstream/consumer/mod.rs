@@ -17,9 +17,12 @@ pub mod pull;
 pub mod push;
 #[cfg(feature = "server_2_10")]
 use std::collections::HashMap;
+use std::pin::Pin;
+use std::task;
 use std::time::Duration;
 
 use crate::datetime::{rfc3339, DateTime};
+use futures_util::FutureExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -252,6 +255,39 @@ pub struct Info {
     /// The remaining time the consumer is paused
     #[serde(default, with = "serde_nanos")]
     pub pause_remaining: Option<Duration>,
+    /// The state of each priority group, including which client is pinned for
+    /// [PriorityPolicy::PinnedClient].
+    #[cfg(feature = "server_2_11")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "server_2_11")))]
+    #[serde(default)]
+    pub priority_groups: Vec<PriorityGroupState>,
+}
+
+/// The state of one priority group of a consumer.
+#[cfg(feature = "server_2_11")]
+#[cfg_attr(docsrs, doc(cfg(feature = "server_2_11")))]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+pub struct PriorityGroupState {
+    /// The name of the group.
+    pub group: String,
+    /// The `Nats-Pin-Id` of the pinned client, or `None` while no client is pinned.
+    pub pinned_client_id: Option<String>,
+    /// When the client was pinned, or `None` while no client is pinned.
+    #[serde(default, deserialize_with = "deserialize_go_zero_time_as_none")]
+    pub pinned_ts: Option<DateTime>,
+}
+
+#[cfg(feature = "server_2_11")]
+fn deserialize_go_zero_time_as_none<'de, D>(deserializer: D) -> Result<Option<DateTime>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match Option::<String>::deserialize(deserializer)? {
+        Some(ts) if ts != "0001-01-01T00:00:00Z" => crate::datetime::parse_rfc3339(&ts)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        _ => Ok(None),
+    }
 }
 
 /// Information about a consumer and the stream it is consuming
@@ -419,6 +455,12 @@ pub struct Config {
     #[cfg(feature = "server_2_11")]
     #[serde(default, skip_serializing_if = "is_default")]
     pub priority_groups: Vec<String>,
+    /// How long a client stays pinned without pulling, for [PriorityPolicy::PinnedClient].
+    /// Zero leaves it to the server, which defaults to 2 minutes.
+    #[cfg(feature = "server_2_11")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "server_2_11")))]
+    #[serde(default, with = "serde_nanos", skip_serializing_if = "is_default")]
+    pub priority_timeout: Duration,
     /// For suspending the consumer until the deadline.
     #[cfg(feature = "server_2_11")]
     #[serde(
@@ -434,9 +476,21 @@ pub struct Config {
 pub enum PriorityPolicy {
     #[serde(rename = "overflow")]
     Overflow,
-    /// This feature is not yet supported by the client.
-    /// It's part of the enum to ensure that the client can deserialize
-    /// Consumer configurations that used [PriorityPolicy::PinnedClient].
+    /// The server pins one pull client per priority group and delivers messages only to it;
+    /// other clients pulling the same group wait on standby. The pin moves to a standby client
+    /// when the pinned one stops pulling for [`Config::priority_timeout`], or when
+    /// [`unpin_consumer`][crate::jetstream::stream::Stream::unpin_consumer] is called.
+    ///
+    /// Pull with `stream().group(..).messages()`. Each pull stream is its own client and keeps
+    /// the pin it receives. Keep the pull expiry well below [`Config::priority_timeout`], or the
+    /// pin is lost between pulls. A new pull stream starts on standby until the pin of a previous
+    /// one expires or is released.
+    ///
+    /// `fetch()`, `batch()` and `sequence()` return [`BatchErrorKind::PinnedClient`] for this
+    /// policy: a one-shot pull could take a pin it never renews and keep every other client on
+    /// standby until [`Config::priority_timeout`].
+    ///
+    /// [`BatchErrorKind::PinnedClient`]: crate::jetstream::consumer::pull::BatchErrorKind::PinnedClient
     #[serde(rename = "pinned_client")]
     PinnedClient,
     #[cfg(feature = "server_2_12")]
@@ -612,10 +666,39 @@ impl std::fmt::Display for StreamErrorKind {
 
 pub type StreamError = Error<StreamErrorKind>;
 
+crate::from_with_timeout!(
+    StreamError,
+    StreamErrorKind,
+    crate::jetstream::stream::ConsumerError,
+    crate::jetstream::stream::ConsumerErrorKind
+);
+
 fn backoff(attempt: u32, _: &impl std::error::Error) -> Duration {
     if attempt < 5 {
         Duration::from_millis(500 * attempt as u64)
     } else {
         Duration::from_secs(10)
     }
+}
+
+/// Polls the missed idle heartbeat timer, arming it for `2 * idle_heartbeat` on first use.
+///
+/// Call only once the subscription is drained: buffered messages prove the consumer is alive,
+/// even if the application polled them after the deadline.
+fn poll_missed_heartbeat(
+    timer: &mut Option<Pin<Box<tokio::time::Sleep>>>,
+    idle_heartbeat: Duration,
+    cx: &mut task::Context<'_>,
+) -> bool {
+    if idle_heartbeat.is_zero() {
+        return false;
+    }
+    let missed = timer
+        .get_or_insert_with(|| Box::pin(tokio::time::sleep(idle_heartbeat.saturating_mul(2))))
+        .poll_unpin(cx)
+        .is_ready();
+    if missed {
+        *timer = None;
+    }
+    missed
 }

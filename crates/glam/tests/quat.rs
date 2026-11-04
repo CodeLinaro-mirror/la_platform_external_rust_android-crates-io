@@ -80,6 +80,10 @@ macro_rules! impl_quat_tests {
             let y5 = $quat::from_rotation_axes(m0.x_axis, m0.y_axis, m0.z_axis);
             assert_approx_eq!(y0, y5);
 
+            should_glam_assert!({ $quat::from_rotation_axes($vec3::ONE, $vec3::Y, $vec3::Z) });
+            should_glam_assert!({ $quat::from_rotation_axes($vec3::X, $vec3::ONE, $vec3::Z) });
+            should_glam_assert!({ $quat::from_rotation_axes($vec3::X, $vec3::Y, $vec3::ONE) });
+
             let x0 = $quat::from_rotation_x(pitch);
             assert!(x0.is_normalized());
             let (axis, angle) = x0.to_axis_angle();
@@ -150,6 +154,12 @@ macro_rules! impl_quat_tests {
 
             should_glam_assert!({ ($quat::IDENTITY * 2.0).inverse() });
             should_glam_assert!({ $quat::from_axis_angle($vec3::ZERO, 0.0) });
+            should_glam_assert!({
+                $quat::from_mat3(&$mat3::from_cols($vec3::ONE, $vec3::Y, $vec3::Z))
+            });
+            should_glam_assert!({
+                $quat::from_mat4(&$mat4::from_cols($vec4::ONE, $vec4::Y, $vec4::Z, $vec4::W))
+            });
         });
 
         glam_test!(test_from_scaled_axis, {
@@ -176,6 +186,8 @@ macro_rules! impl_quat_tests {
                     assert!(($quat::from_scaled_axis(v).to_scaled_axis() - v).length() < 1e-6,);
                 }
             }
+
+            should_glam_assert!({ $quat::from_scaled_axis($vec3::NAN) });
         });
 
         glam_test!(test_mul_vec3, {
@@ -272,6 +284,9 @@ macro_rules! impl_quat_tests {
             assert_approx_eq!(q1.angle_between(q6), TAU - TAU * 0.94, eps);
             assert_approx_eq!((q5 * q1).angle_between(q5 * q6), TAU - TAU * 0.94, eps);
             assert_approx_eq!((q1 * q5).angle_between(q6 * q5), TAU - TAU * 0.94, eps);
+
+            should_glam_assert!({ ($quat::IDENTITY * 2.0).angle_between($quat::IDENTITY) });
+            should_glam_assert!({ $quat::IDENTITY.angle_between($quat::IDENTITY * 0.5) });
         });
 
         glam_test!(test_lerp, {
@@ -466,7 +481,14 @@ macro_rules! impl_quat_tests {
             // Small angles
             let q0 = $quat::from_euler(EulerRot::YXZ, 0.0, 0.0, 0.0);
             let q1 = $quat::from_euler(EulerRot::YXZ, 1e-4, 0.0, 0.0);
-            assert_eq!(q1, q0.rotate_towards(q1, FRAC_PI_2))
+            assert_eq!(q1, q0.rotate_towards(q1, FRAC_PI_2));
+
+            should_glam_assert!({
+                ($quat::IDENTITY * 2.0).rotate_towards($quat::IDENTITY, FRAC_PI_2)
+            });
+            should_glam_assert!({
+                $quat::IDENTITY.rotate_towards($quat::IDENTITY * 0.5, FRAC_PI_2)
+            });
         });
 
         glam_test!(test_fmt, {
@@ -776,7 +798,7 @@ macro_rules! impl_quat_tests {
 mod quat {
     use crate::support::{deg, rad};
     use core::ops::Neg;
-    use glam::{quat, EulerRot, Mat3, Mat4, Quat, Vec2, Vec3, Vec3A, Vec4};
+    use glam::{EulerRot, Mat3, Mat4, Quat, Vec2, Vec3, Vec3A, Vec4, quat};
 
     glam_test!(test_align, {
         use std::mem;
@@ -794,6 +816,9 @@ mod quat {
         assert_approx_eq!(Vec3A::Y, qrz.mul_vec3a(Vec3A::X));
         assert_approx_eq!(Vec3A::Y, -qrz * Vec3A::X);
         assert_approx_eq!(Vec3A::Y, qrz.neg().mul_vec3a(Vec3A::X));
+
+        should_glam_assert!({ (Quat::IDENTITY * 0.5).mul_vec3a(Vec3A::X) });
+        should_glam_assert!({ (Quat::IDENTITY * 0.5) * Vec3A::X });
         assert_approx_eq!(-Vec3A::X, qrz * Vec3A::Y);
         assert_approx_eq!(-Vec3A::X, qrz.mul_vec3a(Vec3A::Y));
         assert_approx_eq!(-Vec3A::X, -qrz * Vec3A::Y);
@@ -854,6 +879,14 @@ mod quat {
         let q = Quat::from_rotation_y(deg(30.0));
         let a = Affine3A::from_quat(q);
         assert_approx_eq!(q, Quat::from_affine3a(&a));
+
+        should_glam_assert!({
+            Quat::from_affine3a(&Affine3A::from_mat3(Mat3::from_cols(
+                Vec3::ONE,
+                Vec3::Y,
+                Vec3::Z,
+            )))
+        });
     });
 
     glam_test!(test_quat_deref_mut, {
@@ -870,6 +903,10 @@ mod quat {
         assert_approx_eq!(y0, y1);
         let y2 = Quat::from_mat3a(&Mat3A::from_quat(y0));
         assert_approx_eq!(y0, y2);
+
+        should_glam_assert!({
+            Quat::from_mat3a(&Mat3A::from_cols(Vec3A::ONE, Vec3A::Y, Vec3A::Z))
+        });
     });
 
     #[cfg(feature = "f64")]
@@ -912,7 +949,7 @@ mod quat {
 mod dquat {
     use crate::support::{deg, rad};
     use core::ops::Neg;
-    use glam::{dquat, DMat3, DMat4, DQuat, DVec2, DVec3, DVec4, EulerRot};
+    use glam::{DMat3, DMat4, DQuat, DVec2, DVec3, DVec4, EulerRot, dquat};
 
     glam_test!(test_align, {
         use std::mem;

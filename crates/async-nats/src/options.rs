@@ -670,7 +670,13 @@ impl ConnectOptions {
         self
     }
 
-    /// Sets a timeout for `Client::request`. Default value is set to 10 seconds.
+    /// Sets the timeout for `Client::request` and, when no JetStream context timeout is set,
+    /// for JetStream API requests. Default value is set to 10 seconds.
+    ///
+    /// `None` disables the timeout: a request whose reply is lost waits forever. On a JetStream
+    /// context without its own timeout this includes JetStream API requests; ordered consumer
+    /// recreation then falls back to 10 seconds. Avoid it. To wait longer on JetStream API
+    /// requests, set the JetStream context timeout instead.
     ///
     /// # Examples
     /// ```no_run
@@ -825,11 +831,11 @@ impl ConnectOptions {
         self
     }
 
-    /// By default, Client dispatches op's to the Client onto the channel with capacity of 128.
-    /// This option enables overriding it.
+    /// By default, Client dispatches commands onto a client channel with capacity `2048`.
+    /// This option lets you override that capacity.
     ///
     /// # Examples
-    /// ```
+    /// ```no_run
     /// # #[tokio::main]
     /// # async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     /// async_nats::ConnectOptions::new()

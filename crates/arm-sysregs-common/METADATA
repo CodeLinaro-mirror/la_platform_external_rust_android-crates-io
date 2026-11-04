@@ -1,17 +1,17 @@
 name: "arm-sysregs-common"
 description: "Common macros for the Armv8-A system register crates"
 third_party {
-  version: "0.5.1"
+  version: "0.5.2"
   license_type: NOTICE
   last_upgrade_date {
     year: 2026
-    month: 10
-    day: 1
+    month: 11
+    day: 3
   }
   homepage: "https://crates.io/crates/arm-sysregs-common"
   identifier {
     type: "crates.io"
     value: "arm-sysregs-common"
-    version: "0.5.1"
+    version: "0.5.2"
   }
 }

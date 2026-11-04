@@ -1,0 +1,36 @@
+[package]
+name = "aom-roar"
+version = "1.1.0"
+license-file = "LICENSE"
+description = "A Rust port of Alliance for Open Media's Open Audio Renderer (OAR)."
+readme = "README.md"
+repository = "https://github.com/AOMediaCodec/roar/"
+# Rust edition and version are also specified in MODULE.bazel for bazel builds.
+edition = "2024"
+rust-version = "1.92.0"
+categories = ["multimedia::audio"]
+keywords = [
+  "AOMedia",
+  "binaural",
+  "IAMF",
+  "immersive",
+  "renderer",
+]
+
+[dependencies]
+log = "0.4"
+realfft = "3.5.1"
+rustfft = "6.4.1"
+
+[[bin]]
+name = "generate_binaural_filters"
+path = "bin/generate_binaural_filters.rs"
+
+[dev-dependencies]
+googletest = "0.14.3"
+rstest = "0.17.0"
+
+[patch.crates-io]
+# The current crates.io version (0.14.3) is out of date.  Pull from git until a
+# new version is released.
+googletest = { git = "https://github.com/google/googletest-rust", rev = "75ba2198e83bd2e62785fa92e2bf28aa30591a67" }

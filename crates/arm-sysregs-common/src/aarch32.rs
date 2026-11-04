@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright The arm-sysregs Contributors.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+//! AArch32 implementations of system register getters and setters.
+
 /// Generates a public function named `read_$ident` to read the system register `$sysreg` as a value
 /// of type `$type`.
 ///

@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.88"
 name = "arm-sysregs-common"
-version = "0.5.1"
+version = "0.5.2"
 authors = ["Andrew Walbran <qwandor@google.com>"]
 build = false
 autolib = false
@@ -53,9 +53,23 @@ fakes = []
 name = "arm_sysregs_common"
 path = "src/lib.rs"
 
+[dependencies.bitflags]
+version = "2.13.2"
+
 [dependencies.num_enum]
-version = "0.7.5"
+version = "0.7.6"
 default-features = false
 
 [dependencies.pastey]
 version = "0.2.3"
+
+[lints.clippy]
+len_without_is_empty = "allow"
+manual_range_contains = "allow"
+missing_safety_doc = "deny"
+undocumented_unsafe_blocks = "deny"
+unreadable_literal = "deny"
+
+[lints.rust]
+missing_docs = "deny"
+unsafe_op_in_unsafe_fn = "deny"

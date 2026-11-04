@@ -9,6 +9,41 @@ use arm_sysregs_common::mask_extend;
 use bitflags::bitflags;
 
 bitflags! {
+    /// `ACCDATA_EL1` system register value.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(transparent)]
+    pub struct AccdataEl1: u64 {
+    }
+}
+
+impl AccdataEl1 {
+    /// Offset of the `ACCDATA` field.
+    pub const ACCDATA_SHIFT: u32 = 0;
+    /// Mask for the `ACCDATA` field.
+    pub const ACCDATA_MASK: u64 = 0b1111_1111_1111_1111_1111_1111_1111_1111;
+
+    /// Returns the value of the `ACCDATA` field.
+    pub const fn accdata(self) -> u32 {
+        (self.bits() >> Self::ACCDATA_SHIFT) as u32
+    }
+
+    /// Sets the value of the `ACCDATA` field.
+    pub const fn set_accdata(&mut self, value: u32) {
+        let offset = Self::ACCDATA_SHIFT;
+        *self = Self::from_bits_retain(
+            (self.bits() & !(Self::ACCDATA_MASK << offset))
+                | ((value as u64 & Self::ACCDATA_MASK) << offset),
+        );
+    }
+
+    /// Returns a copy with the `ACCDATA` field set to the given value.
+    pub const fn with_accdata(mut self, value: u32) -> Self {
+        self.set_accdata(value);
+        self
+    }
+}
+
+bitflags! {
     /// `APIAKeyHi_EL1` system register value.
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     #[repr(transparent)]
@@ -2290,6 +2325,365 @@ impl IdAa64dfr1El1 {
     /// Returns a copy with the `ABL_CMPs` field set to the given value.
     pub const fn with_abl_cmps(mut self, value: u8) -> Self {
         self.set_abl_cmps(value);
+        self
+    }
+}
+
+bitflags! {
+    /// `ID_AA64ISAR0_EL1` system register value.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    #[repr(transparent)]
+    pub struct IdAa64isar0El1: u64 {
+    }
+}
+
+impl IdAa64isar0El1 {
+    /// Offset of the `AES` field.
+    pub const AES_SHIFT: u32 = 4;
+    /// Mask for the `AES` field.
+    pub const AES_MASK: u64 = 0b1111;
+    /// Offset of the `SHA1` field.
+    pub const SHA1_SHIFT: u32 = 8;
+    /// Mask for the `SHA1` field.
+    pub const SHA1_MASK: u64 = 0b1111;
+    /// Offset of the `SHA2` field.
+    pub const SHA2_SHIFT: u32 = 12;
+    /// Mask for the `SHA2` field.
+    pub const SHA2_MASK: u64 = 0b1111;
+    /// Offset of the `CRC32` field.
+    pub const CRC32_SHIFT: u32 = 16;
+    /// Mask for the `CRC32` field.
+    pub const CRC32_MASK: u64 = 0b1111;
+    /// Offset of the `Atomic` field.
+    pub const ATOMIC_SHIFT: u32 = 20;
+    /// Mask for the `Atomic` field.
+    pub const ATOMIC_MASK: u64 = 0b1111;
+    /// Offset of the `RDM` field.
+    pub const RDM_SHIFT: u32 = 28;
+    /// Mask for the `RDM` field.
+    pub const RDM_MASK: u64 = 0b1111;
+    /// Offset of the `SHA3` field.
+    pub const SHA3_SHIFT: u32 = 32;
+    /// Mask for the `SHA3` field.
+    pub const SHA3_MASK: u64 = 0b1111;
+    /// Offset of the `SM3` field.
+    pub const SM3_SHIFT: u32 = 36;
+    /// Mask for the `SM3` field.
+    pub const SM3_MASK: u64 = 0b1111;
+    /// Offset of the `SM4` field.
+    pub const SM4_SHIFT: u32 = 40;
+    /// Mask for the `SM4` field.
+    pub const SM4_MASK: u64 = 0b1111;
+    /// Offset of the `DP` field.
+    pub const DP_SHIFT: u32 = 44;
+    /// Mask for the `DP` field.
+    pub const DP_MASK: u64 = 0b1111;
+    /// Offset of the `FHM` field.
+    pub const FHM_SHIFT: u32 = 48;
+    /// Mask for the `FHM` field.
+    pub const FHM_MASK: u64 = 0b1111;
+    /// Offset of the `TS` field.
+    pub const TS_SHIFT: u32 = 52;
+    /// Mask for the `TS` field.
+    pub const TS_MASK: u64 = 0b1111;
+    /// Offset of the `TLB` field.
+    pub const TLB_SHIFT: u32 = 56;
+    /// Mask for the `TLB` field.
+    pub const TLB_MASK: u64 = 0b1111;
+    /// Offset of the `RNDR` field.
+    pub const RNDR_SHIFT: u32 = 60;
+    /// Mask for the `RNDR` field.
+    pub const RNDR_MASK: u64 = 0b1111;
+
+    /// Returns the value of the `AES` field.
+    pub const fn aes(self) -> u8 {
+        mask_extend!(((self.bits() >> Self::AES_SHIFT) as u8), 4)
+    }
+
+    /// Sets the value of the `AES` field.
+    pub const fn set_aes(&mut self, value: u8) {
+        let offset = Self::AES_SHIFT;
+        assert!(mask_extend!(value, 4) == value);
+        *self = Self::from_bits_retain(
+            (self.bits() & !(Self::AES_MASK << offset))
+                | ((value as u64 & Self::AES_MASK) << offset),
+        );
+    }
+
+    /// Returns a copy with the `AES` field set to the given value.
+    pub const fn with_aes(mut self, value: u8) -> Self {
+        self.set_aes(value);
+        self
+    }
+
+    /// Returns the value of the `SHA1` field.
+    pub const fn sha1(self) -> u8 {
+        mask_extend!(((self.bits() >> Self::SHA1_SHIFT) as u8), 4)
+    }
+
+    /// Sets the value of the `SHA1` field.
+    pub const fn set_sha1(&mut self, value: u8) {
+        let offset = Self::SHA1_SHIFT;
+        assert!(mask_extend!(value, 4) == value);
+        *self = Self::from_bits_retain(
+            (self.bits() & !(Self::SHA1_MASK << offset))
+                | ((value as u64 & Self::SHA1_MASK) << offset),
+        );
+    }
+
+    /// Returns a copy with the `SHA1` field set to the given value.
+    pub const fn with_sha1(mut self, value: u8) -> Self {
+        self.set_sha1(value);
+        self
+    }
+
+    /// Returns the value of the `SHA2` field.
+    pub const fn sha2(self) -> u8 {
+        mask_extend!(((self.bits() >> Self::SHA2_SHIFT) as u8), 4)
+    }
+
+    /// Sets the value of the `SHA2` field.
+    pub const fn set_sha2(&mut self, value: u8) {
+        let offset = Self::SHA2_SHIFT;
+        assert!(mask_extend!(value, 4) == value);
+        *self = Self::from_bits_retain(
+            (self.bits() & !(Self::SHA2_MASK << offset))
+                | ((value as u64 & Self::SHA2_MASK) << offset),
+        );
+    }
+
+    /// Returns a copy with the `SHA2` field set to the given value.
+    pub const fn with_sha2(mut self, value: u8) -> Self {
+        self.set_sha2(value);
+        self
+    }
+
+    /// Returns the value of the `CRC32` field.
+    pub const fn crc32(self) -> u8 {
+        mask_extend!(((self.bits() >> Self::CRC32_SHIFT) as u8), 4)
+    }
+
+    /// Sets the value of the `CRC32` field.
+    pub const fn set_crc32(&mut self, value: u8) {
+        let offset = Self::CRC32_SHIFT;
+        assert!(mask_extend!(value, 4) == value);
+        *self = Self::from_bits_retain(
+            (self.bits() & !(Self::CRC32_MASK << offset))
+                | ((value as u64 & Self::CRC32_MASK) << offset),
+        );
+    }
+
+    /// Returns a copy with the `CRC32` field set to the given value.
+    pub const fn with_crc32(mut self, value: u8) -> Self {
+        self.set_crc32(value);
+        self
+    }
+
+    /// Returns the value of the `Atomic` field.
+    pub const fn atomic(self) -> u8 {
+        mask_extend!(((self.bits() >> Self::ATOMIC_SHIFT) as u8), 4)
+    }
+
+    /// Sets the value of the `Atomic` field.
+    pub const fn set_atomic(&mut self, value: u8) {
+        let offset = Self::ATOMIC_SHIFT;
+        assert!(mask_extend!(value, 4) == value);
+        *self = Self::from_bits_retain(
+            (self.bits() & !(Self::ATOMIC_MASK << offset))
+                | ((value as u64 & Self::ATOMIC_MASK) << offset),
+        );
+    }
+
+    /// Returns a copy with the `Atomic` field set to the given value.
+    pub const fn with_atomic(mut self, value: u8) -> Self {
+        self.set_atomic(value);
+        self
+    }
+
+    /// Returns the value of the `RDM` field.
+    pub const fn rdm(self) -> u8 {
+        mask_extend!(((self.bits() >> Self::RDM_SHIFT) as u8), 4)
+    }
+
+    /// Sets the value of the `RDM` field.
+    pub const fn set_rdm(&mut self, value: u8) {
+        let offset = Self::RDM_SHIFT;
+        assert!(mask_extend!(value, 4) == value);
+        *self = Self::from_bits_retain(
+            (self.bits() & !(Self::RDM_MASK << offset))
+                | ((value as u64 & Self::RDM_MASK) << offset),
+        );
+    }
+
+    /// Returns a copy with the `RDM` field set to the given value.
+    pub const fn with_rdm(mut self, value: u8) -> Self {
+        self.set_rdm(value);
+        self
+    }
+
+    /// Returns the value of the `SHA3` field.
+    pub const fn sha3(self) -> u8 {
+        mask_extend!(((self.bits() >> Self::SHA3_SHIFT) as u8), 4)
+    }
+
+    /// Sets the value of the `SHA3` field.
+    pub const fn set_sha3(&mut self, value: u8) {
+        let offset = Self::SHA3_SHIFT;
+        assert!(mask_extend!(value, 4) == value);
+        *self = Self::from_bits_retain(
+            (self.bits() & !(Self::SHA3_MASK << offset))
+                | ((value as u64 & Self::SHA3_MASK) << offset),
+        );
+    }
+
+    /// Returns a copy with the `SHA3` field set to the given value.
+    pub const fn with_sha3(mut self, value: u8) -> Self {
+        self.set_sha3(value);
+        self
+    }
+
+    /// Returns the value of the `SM3` field.
+    pub const fn sm3(self) -> u8 {
+        mask_extend!(((self.bits() >> Self::SM3_SHIFT) as u8), 4)
+    }
+
+    /// Sets the value of the `SM3` field.
+    pub const fn set_sm3(&mut self, value: u8) {
+        let offset = Self::SM3_SHIFT;
+        assert!(mask_extend!(value, 4) == value);
+        *self = Self::from_bits_retain(
+            (self.bits() & !(Self::SM3_MASK << offset))
+                | ((value as u64 & Self::SM3_MASK) << offset),
+        );
+    }
+
+    /// Returns a copy with the `SM3` field set to the given value.
+    pub const fn with_sm3(mut self, value: u8) -> Self {
+        self.set_sm3(value);
+        self
+    }
+
+    /// Returns the value of the `SM4` field.
+    pub const fn sm4(self) -> u8 {
+        mask_extend!(((self.bits() >> Self::SM4_SHIFT) as u8), 4)
+    }
+
+    /// Sets the value of the `SM4` field.
+    pub const fn set_sm4(&mut self, value: u8) {
+        let offset = Self::SM4_SHIFT;
+        assert!(mask_extend!(value, 4) == value);
+        *self = Self::from_bits_retain(
+            (self.bits() & !(Self::SM4_MASK << offset))
+                | ((value as u64 & Self::SM4_MASK) << offset),
+        );
+    }
+
+    /// Returns a copy with the `SM4` field set to the given value.
+    pub const fn with_sm4(mut self, value: u8) -> Self {
+        self.set_sm4(value);
+        self
+    }
+
+    /// Returns the value of the `DP` field.
+    pub const fn dp(self) -> u8 {
+        mask_extend!(((self.bits() >> Self::DP_SHIFT) as u8), 4)
+    }
+
+    /// Sets the value of the `DP` field.
+    pub const fn set_dp(&mut self, value: u8) {
+        let offset = Self::DP_SHIFT;
+        assert!(mask_extend!(value, 4) == value);
+        *self = Self::from_bits_retain(
+            (self.bits() & !(Self::DP_MASK << offset)) | ((value as u64 & Self::DP_MASK) << offset),
+        );
+    }
+
+    /// Returns a copy with the `DP` field set to the given value.
+    pub const fn with_dp(mut self, value: u8) -> Self {
+        self.set_dp(value);
+        self
+    }
+
+    /// Returns the value of the `FHM` field.
+    pub const fn fhm(self) -> u8 {
+        mask_extend!(((self.bits() >> Self::FHM_SHIFT) as u8), 4)
+    }
+
+    /// Sets the value of the `FHM` field.
+    pub const fn set_fhm(&mut self, value: u8) {
+        let offset = Self::FHM_SHIFT;
+        assert!(mask_extend!(value, 4) == value);
+        *self = Self::from_bits_retain(
+            (self.bits() & !(Self::FHM_MASK << offset))
+                | ((value as u64 & Self::FHM_MASK) << offset),
+        );
+    }
+
+    /// Returns a copy with the `FHM` field set to the given value.
+    pub const fn with_fhm(mut self, value: u8) -> Self {
+        self.set_fhm(value);
+        self
+    }
+
+    /// Returns the value of the `TS` field.
+    pub const fn ts(self) -> u8 {
+        mask_extend!(((self.bits() >> Self::TS_SHIFT) as u8), 4)
+    }
+
+    /// Sets the value of the `TS` field.
+    pub const fn set_ts(&mut self, value: u8) {
+        let offset = Self::TS_SHIFT;
+        assert!(mask_extend!(value, 4) == value);
+        *self = Self::from_bits_retain(
+            (self.bits() & !(Self::TS_MASK << offset)) | ((value as u64 & Self::TS_MASK) << offset),
+        );
+    }
+
+    /// Returns a copy with the `TS` field set to the given value.
+    pub const fn with_ts(mut self, value: u8) -> Self {
+        self.set_ts(value);
+        self
+    }
+
+    /// Returns the value of the `TLB` field.
+    pub const fn tlb(self) -> u8 {
+        mask_extend!(((self.bits() >> Self::TLB_SHIFT) as u8), 4)
+    }
+
+    /// Sets the value of the `TLB` field.
+    pub const fn set_tlb(&mut self, value: u8) {
+        let offset = Self::TLB_SHIFT;
+        assert!(mask_extend!(value, 4) == value);
+        *self = Self::from_bits_retain(
+            (self.bits() & !(Self::TLB_MASK << offset))
+                | ((value as u64 & Self::TLB_MASK) << offset),
+        );
+    }
+
+    /// Returns a copy with the `TLB` field set to the given value.
+    pub const fn with_tlb(mut self, value: u8) -> Self {
+        self.set_tlb(value);
+        self
+    }
+
+    /// Returns the value of the `RNDR` field.
+    pub const fn rndr(self) -> u8 {
+        mask_extend!(((self.bits() >> Self::RNDR_SHIFT) as u8), 4)
+    }
+
+    /// Sets the value of the `RNDR` field.
+    pub const fn set_rndr(&mut self, value: u8) {
+        let offset = Self::RNDR_SHIFT;
+        assert!(mask_extend!(value, 4) == value);
+        *self = Self::from_bits_retain(
+            (self.bits() & !(Self::RNDR_MASK << offset))
+                | ((value as u64 & Self::RNDR_MASK) << offset),
+        );
+    }
+
+    /// Returns a copy with the `RNDR` field set to the given value.
+    pub const fn with_rndr(mut self, value: u8) -> Self {
+        self.set_rndr(value);
         self
     }
 }

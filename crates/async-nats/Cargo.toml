@@ -11,9 +11,9 @@
 
 [package]
 edition = "2021"
-rust-version = "1.88.0"
+rust-version = "1.89.0"
 name = "async-nats"
-version = "0.50.0"
+version = "0.51.0"
 authors = [
     "Tomasz Pietrek <tomasz@nats.io>",
     "Casper Beyer <caspervonb@pm.me>",
@@ -70,7 +70,6 @@ rustdoc-args = [
 aws-lc-rs = [
     "dep:aws-lc-rs",
     "tokio-rustls/aws-lc-rs",
-    "tokio-websockets?/aws-lc-rs",
     "rustls-webpki/aws-lc-rs",
 ]
 chrono = ["dep:chrono"]
@@ -95,6 +94,7 @@ experimental = []
 fips = [
     "aws-lc-rs",
     "tokio-rustls/fips",
+    "tokio-websockets?/aws_lc_rs",
 ]
 jetstream = [
     "dep:time",
@@ -115,7 +115,6 @@ object-store = [
 ring = [
     "dep:ring",
     "tokio-rustls/ring",
-    "tokio-websockets?/ring",
 ]
 server_2_10 = []
 server_2_11 = []
@@ -155,6 +154,214 @@ path = "examples/docs_getting_started_subscribe.rs"
 [[example]]
 name = "docs_jetstream_basic"
 path = "examples/docs_jetstream_basic.rs"
+
+[[example]]
+name = "docs_learn_core_nats_publish_subscribe_publish"
+path = "examples/docs_learn_core_nats_publish_subscribe_publish.rs"
+
+[[example]]
+name = "docs_learn_core_nats_publish_subscribe_subscribe"
+path = "examples/docs_learn_core_nats_publish_subscribe_subscribe.rs"
+
+[[example]]
+name = "docs_learn_core_nats_queue_groups_queue_subscribe"
+path = "examples/docs_learn_core_nats_queue_groups_queue_subscribe.rs"
+
+[[example]]
+name = "docs_learn_core_nats_request_reply_replies"
+path = "examples/docs_learn_core_nats_request_reply_replies.rs"
+
+[[example]]
+name = "docs_learn_core_nats_request_reply_request"
+path = "examples/docs_learn_core_nats_request_reply_request.rs"
+
+[[example]]
+name = "docs_learn_core_nats_request_reply_respond"
+path = "examples/docs_learn_core_nats_request_reply_respond.rs"
+
+[[example]]
+name = "docs_learn_core_nats_scatter_gather_gather"
+path = "examples/docs_learn_core_nats_scatter_gather_gather.rs"
+
+[[example]]
+name = "docs_learn_core_nats_scatter_gather_provider"
+path = "examples/docs_learn_core_nats_scatter_gather_provider.rs"
+
+[[example]]
+name = "docs_learn_core_nats_subjects_and_wildcards_wildcard_multi"
+path = "examples/docs_learn_core_nats_subjects_and_wildcards_wildcard_multi.rs"
+
+[[example]]
+name = "docs_learn_core_nats_subjects_and_wildcards_wildcard_single"
+path = "examples/docs_learn_core_nats_subjects_and_wildcards_wildcard_single.rs"
+
+[[example]]
+name = "docs_learn_jetstream_acknowledgment_nak_with_delay"
+path = "examples/docs_learn_jetstream_acknowledgment_nak_with_delay.rs"
+
+[[example]]
+name = "docs_learn_jetstream_acknowledgment_term_poison"
+path = "examples/docs_learn_jetstream_acknowledgment_term_poison.rs"
+
+[[example]]
+name = "docs_learn_jetstream_acknowledgment_watch_max_deliveries"
+path = "examples/docs_learn_jetstream_acknowledgment_watch_max_deliveries.rs"
+
+[[example]]
+name = "docs_learn_jetstream_advanced_publishing_async"
+path = "examples/docs_learn_jetstream_advanced_publishing_async.rs"
+
+[[example]]
+name = "docs_learn_jetstream_filtering_create_filtered"
+path = "examples/docs_learn_jetstream_filtering_create_filtered.rs"
+
+[[example]]
+name = "docs_learn_jetstream_filtering_filter_matches_nothing"
+path = "examples/docs_learn_jetstream_filtering_filter_matches_nothing.rs"
+
+[[example]]
+name = "docs_learn_jetstream_get_direct_by_sequence"
+path = "examples/docs_learn_jetstream_get_direct_by_sequence.rs"
+
+[[example]]
+name = "docs_learn_jetstream_get_direct_direct_read"
+path = "examples/docs_learn_jetstream_get_direct_direct_read.rs"
+
+[[example]]
+name = "docs_learn_jetstream_get_direct_enable"
+path = "examples/docs_learn_jetstream_get_direct_enable.rs"
+
+[[example]]
+name = "docs_learn_jetstream_get_direct_last_for_subject"
+path = "examples/docs_learn_jetstream_get_direct_last_for_subject.rs"
+
+[[example]]
+name = "docs_learn_jetstream_message_ttl_publish_with_ttl"
+path = "examples/docs_learn_jetstream_message_ttl_publish_with_ttl.rs"
+
+[[example]]
+name = "docs_learn_jetstream_message_ttl_ttl_on_disabled_stream"
+path = "examples/docs_learn_jetstream_message_ttl_ttl_on_disabled_stream.rs"
+
+[[example]]
+name = "docs_learn_jetstream_mirrors_and_sources_create_mirror"
+path = "examples/docs_learn_jetstream_mirrors_and_sources_create_mirror.rs"
+
+[[example]]
+name = "docs_learn_jetstream_mirrors_and_sources_create_source"
+path = "examples/docs_learn_jetstream_mirrors_and_sources_create_source.rs"
+
+[[example]]
+name = "docs_learn_jetstream_mirrors_and_sources_mirror_lag"
+path = "examples/docs_learn_jetstream_mirrors_and_sources_mirror_lag.rs"
+
+[[example]]
+name = "docs_learn_jetstream_ordered_consumer_read"
+path = "examples/docs_learn_jetstream_ordered_consumer_read.rs"
+
+[[example]]
+name = "docs_learn_jetstream_publishing_confirm_stored"
+path = "examples/docs_learn_jetstream_publishing_confirm_stored.rs"
+
+[[example]]
+name = "docs_learn_jetstream_publishing_dedup"
+path = "examples/docs_learn_jetstream_publishing_dedup.rs"
+
+[[example]]
+name = "docs_learn_jetstream_publishing_pub_ack"
+path = "examples/docs_learn_jetstream_publishing_pub_ack.rs"
+
+[[example]]
+name = "docs_learn_jetstream_publishing_sync"
+path = "examples/docs_learn_jetstream_publishing_sync.rs"
+
+[[example]]
+name = "docs_learn_jetstream_pull_consumers_consume_continuous"
+path = "examples/docs_learn_jetstream_pull_consumers_consume_continuous.rs"
+
+[[example]]
+name = "docs_learn_jetstream_pull_consumers_empty_fetch"
+path = "examples/docs_learn_jetstream_pull_consumers_empty_fetch.rs"
+
+[[example]]
+name = "docs_learn_jetstream_pull_consumers_fetch_batch"
+path = "examples/docs_learn_jetstream_pull_consumers_fetch_batch.rs"
+
+[[example]]
+name = "docs_learn_jetstream_reading_back_create"
+path = "examples/docs_learn_jetstream_reading_back_create.rs"
+
+[[example]]
+name = "docs_learn_jetstream_reading_back_read"
+path = "examples/docs_learn_jetstream_reading_back_read.rs"
+
+[[example]]
+name = "docs_learn_jetstream_retention_policies_retention_switch_rejected"
+path = "examples/docs_learn_jetstream_retention_policies_retention_switch_rejected.rs"
+
+[[example]]
+name = "docs_learn_jetstream_retention_policies_work_queue_create"
+path = "examples/docs_learn_jetstream_retention_policies_work_queue_create.rs"
+
+[[example]]
+name = "docs_learn_jetstream_retention_policies_workqueue_overlap"
+path = "examples/docs_learn_jetstream_retention_policies_workqueue_overlap.rs"
+
+[[example]]
+name = "docs_learn_jetstream_shaping_the_stream_discard_new"
+path = "examples/docs_learn_jetstream_shaping_the_stream_discard_new.rs"
+
+[[example]]
+name = "docs_learn_jetstream_shaping_the_stream_per_subject_limit"
+path = "examples/docs_learn_jetstream_shaping_the_stream_per_subject_limit.rs"
+
+[[example]]
+name = "docs_learn_jetstream_shaping_the_stream_set_limits"
+path = "examples/docs_learn_jetstream_shaping_the_stream_set_limits.rs"
+
+[[example]]
+name = "docs_learn_jetstream_subject_mapping_republish"
+path = "examples/docs_learn_jetstream_subject_mapping_republish.rs"
+
+[[example]]
+name = "docs_learn_jetstream_subject_mapping_transform"
+path = "examples/docs_learn_jetstream_subject_mapping_transform.rs"
+
+[[example]]
+name = "docs_learn_jetstream_worker_pool_max_pending"
+path = "examples/docs_learn_jetstream_worker_pool_max_pending.rs"
+
+[[example]]
+name = "docs_learn_jetstream_worker_pool_redelivery_count"
+path = "examples/docs_learn_jetstream_worker_pool_redelivery_count.rs"
+
+[[example]]
+name = "docs_learn_jetstream_worker_pool_worker"
+path = "examples/docs_learn_jetstream_worker_pool_worker.rs"
+
+[[example]]
+name = "docs_learn_jetstream_your_first_consumer_create"
+path = "examples/docs_learn_jetstream_your_first_consumer_create.rs"
+
+[[example]]
+name = "docs_learn_jetstream_your_first_consumer_double_ack"
+path = "examples/docs_learn_jetstream_your_first_consumer_double_ack.rs"
+
+[[example]]
+name = "docs_learn_jetstream_your_first_consumer_next"
+path = "examples/docs_learn_jetstream_your_first_consumer_next.rs"
+
+[[example]]
+name = "docs_learn_jetstream_your_first_consumer_pull_and_ack"
+path = "examples/docs_learn_jetstream_your_first_consumer_pull_and_ack.rs"
+
+[[example]]
+name = "docs_learn_jetstream_your_first_stream_create"
+path = "examples/docs_learn_jetstream_your_first_stream_create.rs"
+
+[[example]]
+name = "docs_learn_jetstream_your_first_stream_info"
+path = "examples/docs_learn_jetstream_your_first_stream_info.rs"
 
 [[example]]
 name = "docs_queue_groups_basic"
@@ -253,6 +460,10 @@ name = "compatibility"
 path = "tests/compatibility.rs"
 
 [[test]]
+name = "jetstream_api_timeout_tests"
+path = "tests/jetstream_api_timeout_tests.rs"
+
+[[test]]
 name = "jetstream_tests"
 path = "tests/jetstream_tests.rs"
 
@@ -271,6 +482,14 @@ path = "tests/nkey_tests.rs"
 [[test]]
 name = "object_store"
 path = "tests/object_store.rs"
+
+[[test]]
+name = "pinned_client_test"
+path = "tests/pinned_client_test.rs"
+
+[[test]]
+name = "pull_exceeded_max_request_test"
+path = "tests/pull_exceeded_max_request_test.rs"
 
 [[test]]
 name = "server_pool_parity_tests"
@@ -310,7 +529,7 @@ path = "benches/main.rs"
 harness = false
 
 [dependencies.aws-lc-rs]
-version = "1.6"
+version = "1.18"
 optional = true
 
 [dependencies.base64]
@@ -427,11 +646,12 @@ version = "0.1.17"
 version = "0.7"
 
 [dependencies.tokio-websockets]
-version = "0.10"
+version = "0.13.3"
 features = [
     "client",
     "rand",
-    "rustls-webpki-roots",
+    "rustls-bring-your-own-connector",
+    "sha1_smol",
 ]
 optional = true
 default-features = false

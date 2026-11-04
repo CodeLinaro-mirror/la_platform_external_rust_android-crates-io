@@ -38,7 +38,7 @@
 * [`usize`](mod@usize) types
   * vectors: [`USizeVec2`], [`USizeVec3`] and [`USizeVec4`]
 * [`bool`](mod@bool) types
-  * vectors: [`BVec2`], [`BVec3`] and [`BVec4`]
+  * vectors: [`BVec2`], [`BVec3`], [`BVec3A`], [`BVec4`] and [`BVec4A`]
 
 All types are enabled by default. Only `f32` and `bool` types are built-in.
 All other types are optional and can be disabled if not needed for faster
@@ -75,14 +75,12 @@ of three `Vec3A` columns.
 |[`Mat3`]    |           36|            4|          36|        0|
 |[`Mat3A`]   |           36|           16|          48|       12|
 
-Despite this wasted space the SIMD implementations tend to outperform `f32` implementations in
-[**mathbench**](https://github.com/bitshifter/mathbench-rs) benchmarks.
-
 `glam` treats [`Vec3`] as the default 3D vector type and [`Vec3A`] a special case for optimization.
 When methods need to return a 3D vector they will generally return [`Vec3`].
 
-There are [`From`] trait implementations for converting from [`Vec4`] to a [`Vec3A`] and between
-[`Vec3`] and [`Vec3A`] (and vice versa).
+There are [`From`] trait implementations for converting between [`Vec3`] and [`Vec3A`]. There is
+also a [`Vec3A::from_vec4`] method for converting from [`Vec4`] to [`Vec3A`], discarding the `w`
+element.
 
 ```
 use glam::{Vec3, Vec3A, Vec4};
@@ -106,7 +104,7 @@ assert_eq!(Vec3A::new(1.0, 2.0, 3.0), v3a);
 ## Affine2, Affine3 and Affine3A
 
 `Affine2`, `Affine3` and `Affine3A` are composed of a linear transform matrix and a vector
-translation. The represent 2D and 3D affine transformations which are commonly used in games.
+translation. They represent 2D and 3D affine transformations which are commonly used in games.
 
 `Affine3` is composed from `Vec3` and `Mat3` whereas `Affine3A` is composed from `Mat3A` and
 `Vec3A`. `Affine3A` will generally be faster but is 16 byte aligned and 64 bytes versus `Affine3`
@@ -186,7 +184,7 @@ assert_eq!(4.0, v.z);
 `glam` does not enforce validity checks on method parameters at runtime. For example methods that
 require normalized vectors as input such as `Quat::from_axis_angle(axis, angle)` will not check
 that axis is a valid normalized vector. To help catch unintended misuse of `glam` the
-`debug-glam-assert` or `glam-assert` features can be enabled to add checks ensure that inputs to
+`debug-glam-assert` or `glam-assert` features can be enabled to add checks to ensure that inputs
 are valid.
 
 ## Vector swizzles
@@ -260,45 +258,52 @@ assert_eq!(format!("{}", a), "[1, 2, 3, 4]");
 * `glam-assert` - adds assertions to all builds which check the validity of parameters passed to
   `glam` to help catch runtime errors.
 * `cuda` - forces `glam` types to match expected cuda alignment
-* `fast-math` - **Deprecated.** This feature no longer has any effect and will be removed in a
-  future release.
 * `core-simd` - enables SIMD support via the portable simd module. This is an unstable feature which
   requires a nightly Rust toolchain and `std` support.
 
-## Optional features
+## Optional dependencies
 
 All `glam` dependencies are optional, however some are required for tests
 and benchmarks.
 
-* `approx` - traits and macros for approximate float comparisons
+Pre-1.0 dependencies that appear in `glam`'s public API use versioned feature names
+(e.g. `rand-010`), so a new version can be added without a breaking change.
+
+* `approx-05` - `approx` 0.5 traits and macros for approximate float comparisons.
 * `arbitrary` - implementations of `Arbitrary` trait for all `glam` types.
 * `bytemuck` - for casting into slices of bytes
-* `encase` - `encase` trait implementations for `glam` types. This is a
-  backwards-compatible alias for the `encase-012` feature.
 * `encase-012` - `encase` 0.12 trait implementations for `glam` types.
-* `encase-013` - `encase` 0.13 trait implementations for `glam` types. Can be
-  enabled together with `encase-012` to support both versions at once.
+* `encase-013` - `encase` 0.13 trait implementations for `glam` types.
 * `float_eq` - traits and macros for comparing float types using various tolerances.
 * `libm` - uses `libm` math functions instead of `std`
-* `mint` - for interoperating with other 3D math libraries
-* `rand` - implementations of `Distribution` trait for all `glam` types.
-* `rkyv` - implementations of `Archive`, `Serialize` and `Deserialize` for all
-  `glam` types. Note that serialization is not interoperable with and without the
-  `scalar-math` feature. It should work between all other builds of `glam`.
-  Endian conversion is currently not supported
-* `bytecheck` - to perform archive validation when using the `rkyv` feature
+* `mint-05` - `mint` 0.5 for interoperating with other 3D math libraries.
+* `rand-010` - `rand` 0.10 `Distribution` implementations for all `glam` types.
+* `rkyv-08` - `rkyv` 0.8 `Archive`, `Serialize` and `Deserialize` implementations for all
+  `glam` types, archiving to `glam::rkyv_08` types instead of the native type.
+* `bytecheck` - enables `rkyv`'s archive validation; only has an effect when the `rkyv-08`
+  feature is enabled
 * `serde` - implementations of `Serialize` and `Deserialize` for all `glam`
   types. Note that serialization should work between builds of `glam` with and without SIMD enabled
-* `speedy` - implementations of `speedy`'s `Readable` and `Writable` for all `glam` types.
-* `zerocopy` - implementations of zerocopy traits for safe transmutes.
+* `speedy-08` - `speedy` 0.8 implementations of `Readable` and `Writable` for all
+  `glam` types.
+* `zerocopy-08` - `zerocopy` 0.8 implementations of zerocopy traits for safe transmutes.
 
 ## Minimum Supported Rust Version (MSRV)
 
-The minimum supported Rust version is `1.68.2`.
+The minimum supported version of Rust is `1.85.0`.
+
+Raising the MSRV is treated as a non-breaking change, following Cargo's [semver guidance].
+
+`glam` itself and all of its features are expected to build with the MSRV unless otherwise
+documented. Optional dependencies are exempt, per Cargo's [support expectations]: they are not
+required to build with `glam`'s MSRV, so a feature that enables one may require a newer toolchain
+than `glam` itself.
+
+[semver guidance]: https://doc.rust-lang.org/cargo/reference/semver.html#env-new-rust
+[support expectations]: https://doc.rust-lang.org/cargo/reference/rust-version.html#support-expectations
 
 */
 #![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(target_arch = "spirv", feature(repr_simd))]
 #![cfg_attr(target_arch = "wasm64", feature(simd_wasm64))]
 #![deny(
     rust_2018_compatibility,
@@ -322,6 +327,13 @@ compile_error!(
     "You must specify a math backend. Consider enabling either `std`, `libm`, or `nostd-libm`."
 );
 
+// The `zerocopy` dependency is renamed to `zerocopy-08` (see Cargo.toml), but the
+// `zerocopy-derive` macros reference the crate as `zerocopy`. An `extern crate`
+// alias puts `zerocopy` in the crate root so the generated impls resolve without a
+// per-type `#[zerocopy(crate = "...")]` attribute.
+#[cfg(feature = "zerocopy-08")]
+extern crate zerocopy_08 as zerocopy;
+
 #[macro_use]
 mod macros;
 
@@ -329,6 +341,9 @@ mod align16;
 mod deref;
 mod euler;
 mod features;
+
+#[cfg(feature = "rkyv-08")]
+pub use features::impl_rkyv_08 as rkyv_08;
 
 #[cfg(all(
     target_arch = "aarch64",
@@ -452,3 +467,10 @@ pub use euler::EulerRot;
 /** A trait for extending [`prim@f32`] and [`prim@f64`] with extra methods. */
 mod float;
 pub use float::FloatExt;
+
+// Private supertrait used to seal glam's public traits so that methods can be
+// added after 1.0 without breaking downstream implementors. See C-SEALED:
+// https://rust-lang.github.io/api-guidelines/future-proofing.html#sealed-traits-protect-against-downstream-implementations-c-sealed
+mod sealed {
+    pub trait Sealed {}
+}

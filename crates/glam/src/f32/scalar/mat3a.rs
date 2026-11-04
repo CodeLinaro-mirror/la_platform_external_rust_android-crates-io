@@ -4,17 +4,17 @@
 use crate::DMat3;
 
 use crate::{
+    EulerRot, Mat2, Mat3, Mat4, Quat, Vec2, Vec3, Vec3A,
     euler::{FromEuler, ToEuler},
     f32::math,
     swizzles::*,
-    EulerRot, Mat2, Mat3, Mat4, Quat, Vec2, Vec3, Vec3A,
 };
 use core::fmt;
 use core::iter::{Product, Sum};
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-#[cfg(feature = "zerocopy")]
-use zerocopy_derive::*;
+#[cfg(feature = "zerocopy-08")]
+use zerocopy_derive_08::*;
 
 /// Creates a 3x3 matrix from three column vectors.
 #[inline(always)]
@@ -50,7 +50,7 @@ pub const fn mat3a(x_axis: Vec3A, y_axis: Vec3A, z_axis: Vec3A) -> Mat3A {
 #[derive(Clone, Copy)]
 #[cfg_attr(feature = "bytemuck", derive(bytemuck::Pod, bytemuck::Zeroable))]
 #[cfg_attr(
-    feature = "zerocopy",
+    feature = "zerocopy-08",
     derive(FromBytes, Immutable, IntoBytes, KnownLayout)
 )]
 #[repr(C)]
@@ -224,6 +224,7 @@ impl Mat3A {
     /// Panics if `i` or `j` is greater than 3.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub fn from_mat4_minor(m: Mat4, i: usize, j: usize) -> Self {
         match (i, j) {
             (0, 0) => Self::from_cols(
@@ -317,6 +318,7 @@ impl Mat3A {
     /// Will panic if `rotation` is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn from_quat(rotation: Quat) -> Self {
         glam_assert!(rotation.is_normalized());
 
@@ -348,6 +350,7 @@ impl Mat3A {
     /// Will panic if `axis` is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn from_axis_angle(axis: Vec3, angle: f32) -> Self {
         glam_assert!(axis.is_normalized());
 
@@ -384,6 +387,7 @@ impl Mat3A {
     /// Will panic if any input matrix column is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn to_euler(&self, order: EulerRot) -> (f32, f32, f32) {
         glam_assert!(
             self.x_axis.is_normalized()
@@ -485,6 +489,7 @@ impl Mat3A {
     /// Will panic if all elements of `scale` are zero when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn from_scale(scale: Vec2) -> Self {
         // Do not panic as long as any component is non-zero
         glam_assert!(scale.cmpne(Vec2::ZERO).any());
@@ -514,6 +519,7 @@ impl Mat3A {
     /// Panics if `slice` is less than 9 elements long.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub const fn from_cols_slice(slice: &[f32]) -> Self {
         Self::new(
             slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7],
@@ -527,6 +533,7 @@ impl Mat3A {
     ///
     /// Panics if `slice` is less than 9 elements long.
     #[inline]
+    #[track_caller]
     pub fn write_cols_to_slice(&self, slice: &mut [f32]) {
         slice[0] = self.x_axis.x;
         slice[1] = self.x_axis.y;
@@ -551,6 +558,7 @@ impl Mat3A {
     /// Panics if `slice` is less than 9 elements long.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub const fn from_rows_slice(slice: &[f32]) -> Self {
         Self::new(
             slice[0], slice[3], slice[6], slice[1], slice[4], slice[7], slice[2], slice[5],
@@ -565,6 +573,7 @@ impl Mat3A {
     /// Panics if `index` is greater than 2.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub fn col(&self, index: usize) -> Vec3A {
         match index {
             0 => self.x_axis,
@@ -580,6 +589,7 @@ impl Mat3A {
     ///
     /// Panics if `index` is greater than 2.
     #[inline]
+    #[track_caller]
     pub fn col_mut(&mut self, index: usize) -> &mut Vec3A {
         match index {
             0 => &mut self.x_axis,
@@ -598,6 +608,7 @@ impl Mat3A {
     /// Panics if `index` is greater than 2.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub fn row(&self, index: usize) -> Vec3A {
         match index {
             0 => Vec3A::new(self.x_axis.x, self.y_axis.x, self.z_axis.x),
@@ -617,6 +628,7 @@ impl Mat3A {
     ///
     /// Panics if `index` is greater than 2.
     #[inline]
+    #[track_caller]
     pub fn set_row(&mut self, index: usize, row: Vec3A) {
         match index {
             0 => {
@@ -683,59 +695,61 @@ impl Mat3A {
     /// inverted matrix and true is returned.
     ///
     /// If `CHECKED` is false then the determinant is not checked and if it is zero the resulting
-    /// inverted matrix will be invalid. Will panic if the determinant of `self` is zero when
-    /// `glam_assert` is enabled.
+    /// inverted matrix will be invalid. Will panic if the resulting inverted matrix is not finite
+    /// when `glam_assert` is enabled.
     ///
     /// A tuple containing the inverted matrix and a bool is used instead of an option here as
     /// regular Rust enums put the discriminant first which can result in a lot of padding if the
     /// matrix is aligned.
     #[inline(always)]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     fn inverse_checked<const CHECKED: bool>(&self) -> (Self, bool) {
         let tmp0 = self.y_axis.cross(self.z_axis);
-        let det = self.x_axis.dot(tmp0);
+        let tmp1 = self.z_axis.cross(self.x_axis);
+        let tmp2 = self.x_axis.cross(self.y_axis);
+        let inv_det = Vec3A::splat(1.0 / self.x_axis.dot(tmp0));
+        let m =
+            Self::from_cols(tmp0.mul(inv_det), tmp1.mul(inv_det), tmp2.mul(inv_det)).transpose();
         if CHECKED {
-            if det == 0.0 {
+            if !m.is_finite() {
                 return (Self::ZERO, false);
             }
         } else {
-            glam_assert!(det != 0.0);
+            glam_assert!(m.is_finite());
         }
-        let tmp1 = self.z_axis.cross(self.x_axis);
-        let tmp2 = self.x_axis.cross(self.y_axis);
-        let inv_det = Vec3A::splat(1.0 / det);
-        (
-            Self::from_cols(tmp0.mul(inv_det), tmp1.mul(inv_det), tmp2.mul(inv_det)).transpose(),
-            true,
-        )
+        (m, true)
     }
 
     /// Returns the inverse of `self`.
     ///
-    /// If the matrix is not invertible the returned matrix will be invalid.
+    /// If the matrix is not invertible the returned matrix will be invalid. The
+    /// returned matrix will also be invalid if the inverse is not finite, which can
+    /// happen when `self` contains very large or very small values. Use
+    /// [`Self::try_inverse`] or [`Self::inverse_or_zero`] to detect these cases.
     ///
     /// # Panics
     ///
-    /// Will panic if the determinant of `self` is zero when `glam_assert` is enabled.
+    /// Will panic if the resulting inverted matrix is not finite when `glam_assert`
+    /// is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn inverse(&self) -> Self {
         self.inverse_checked::<false>().0
     }
 
-    /// Returns the inverse of `self` or `None` if the matrix is not invertible.
+    /// Returns the inverse of `self` or `None` if the matrix is not invertible, or if
+    /// the inverse is not finite.
     #[inline]
     #[must_use]
     pub fn try_inverse(&self) -> Option<Self> {
         let (m, is_valid) = self.inverse_checked::<true>();
-        if is_valid {
-            Some(m)
-        } else {
-            None
-        }
+        if is_valid { Some(m) } else { None }
     }
 
-    /// Returns the inverse of `self` or `Mat3A::ZERO` if the matrix is not invertible.
+    /// Returns the inverse of `self` or `Mat3A::ZERO` if the matrix is not
+    /// invertible, or if the inverse is not finite.
     #[inline]
     #[must_use]
     pub fn inverse_or_zero(&self) -> Self {
@@ -753,6 +767,7 @@ impl Mat3A {
     /// Will panic if the 2nd row of `self` is not `(0, 0, 1)` when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn transform_point2(&self, rhs: Vec2) -> Vec2 {
         glam_assert!(self.row(2).abs_diff_eq(Vec3A::Z, 1e-6));
         Mat2::from_cols(self.x_axis.xy(), self.y_axis.xy()) * rhs + self.z_axis.xy()
@@ -769,91 +784,10 @@ impl Mat3A {
     /// Will panic if the 2nd row of `self` is not `(0, 0, 1)` when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn transform_vector2(&self, rhs: Vec2) -> Vec2 {
         glam_assert!(self.row(2).abs_diff_eq(Vec3A::Z, 1e-6));
         Mat2::from_cols(self.x_axis.xy(), self.y_axis.xy()) * rhs
-    }
-
-    /// Creates a left-handed view matrix using a facing direction and an up direction.
-    ///
-    /// For a view coordinate system with `+X=right`, `+Y=up` and `+Z=forward`.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `dir` or `up` are not normalized when `glam_assert` is enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::camera::lh::view::look_to_mat3` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn look_to_lh(dir: Vec3, up: Vec3) -> Self {
-        #[allow(deprecated)]
-        Self::look_to_rh(-dir, up)
-    }
-
-    /// Creates a right-handed view matrix using a facing direction and an up direction.
-    ///
-    /// For a view coordinate system with `+X=right`, `+Y=up` and `+Z=back`.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `dir` or `up` are not normalized when `glam_assert` is enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::camera::rh::view::look_to_mat3` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn look_to_rh(dir: Vec3, up: Vec3) -> Self {
-        glam_assert!(dir.is_normalized());
-        glam_assert!(up.is_normalized());
-        let f = dir;
-        let s = f.cross(up).normalize();
-        let u = s.cross(f);
-
-        Self::from_cols(
-            Vec3A::new(s.x, u.x, -f.x),
-            Vec3A::new(s.y, u.y, -f.y),
-            Vec3A::new(s.z, u.z, -f.z),
-        )
-    }
-
-    /// Creates a left-handed view matrix using a camera position, a focal point and an up
-    /// direction.
-    ///
-    /// For a view coordinate system with `+X=right`, `+Y=up` and `+Z=forward`.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `up` is not normalized when `glam_assert` is enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::camera::lh::view::look_at_mat3` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn look_at_lh(eye: Vec3, center: Vec3, up: Vec3) -> Self {
-        #[allow(deprecated)]
-        Self::look_to_lh(center.sub(eye).normalize(), up)
-    }
-
-    /// Creates a right-handed view matrix using a camera position, a focal point and an up
-    /// direction.
-    ///
-    /// For a view coordinate system with `+X=right`, `+Y=up` and `+Z=back`.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `up` is not normalized when `glam_assert` is enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::camera::rh::view::look_at_mat3` function instead"
-    )]
-    #[inline]
-    pub fn look_at_rh(eye: Vec3, center: Vec3, up: Vec3) -> Self {
-        #[allow(deprecated)]
-        Self::look_to_rh(center.sub(eye).normalize(), up)
     }
 
     /// Transforms a 3D vector.

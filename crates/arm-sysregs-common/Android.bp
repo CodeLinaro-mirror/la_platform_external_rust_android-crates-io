@@ -18,10 +18,13 @@ rust_library {
     defaults: ["rust_baremetal_defaults"],
     crate_name: "arm_sysregs_common",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.5.1",
+    cargo_pkg_version: "0.5.2",
     crate_root: "src/lib.rs",
     edition: "2024",
-    rustlibs: ["libnum_enum"],
+    rustlibs: [
+        "libbitflags",
+        "libnum_enum",
+    ],
     proc_macros: ["libpastey"],
     apex_available: [
         "//apex_available:platform",

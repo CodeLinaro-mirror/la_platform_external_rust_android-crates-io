@@ -3,15 +3,15 @@
 #[cfg(feature = "f64")]
 use crate::DMat2;
 
-use crate::{f32::math, swizzles::*, Mat3, Mat3A, Vec2};
+use crate::{Mat3, Mat3A, Vec2, f32::math, swizzles::*};
 use core::fmt;
 use core::iter::{Product, Sum};
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use core::arch::aarch64::*;
 
-#[cfg(feature = "zerocopy")]
-use zerocopy_derive::*;
+#[cfg(feature = "zerocopy-08")]
+use zerocopy_derive_08::*;
 
 #[repr(C)]
 union UnionCast {
@@ -34,7 +34,7 @@ pub const fn mat2(x_axis: Vec2, y_axis: Vec2) -> Mat2 {
 #[derive(Clone, Copy)]
 #[cfg_attr(feature = "bytemuck", derive(bytemuck::Pod, bytemuck::Zeroable))]
 #[cfg_attr(
-    feature = "zerocopy",
+    feature = "zerocopy-08",
     derive(FromBytes, Immutable, IntoBytes, KnownLayout)
 )]
 #[repr(transparent)]
@@ -188,6 +188,7 @@ impl Mat2 {
     /// Panics if `i` or `j` is greater than 2.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub fn from_mat3_minor(m: Mat3, i: usize, j: usize) -> Self {
         match (i, j) {
             (0, 0) => Self::from_cols(m.y_axis.yz(), m.z_axis.yz()),
@@ -218,6 +219,7 @@ impl Mat2 {
     /// Panics if `i` or `j` is greater than 2.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub fn from_mat3a_minor(m: Mat3A, i: usize, j: usize) -> Self {
         match (i, j) {
             (0, 0) => Self::from_cols(m.y_axis.yz(), m.z_axis.yz()),
@@ -242,6 +244,7 @@ impl Mat2 {
     /// Panics if `slice` is less than 4 elements long.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub const fn from_cols_slice(slice: &[f32]) -> Self {
         Self::new(slice[0], slice[1], slice[2], slice[3])
     }
@@ -252,6 +255,7 @@ impl Mat2 {
     ///
     /// Panics if `slice` is less than 4 elements long.
     #[inline]
+    #[track_caller]
     pub fn write_cols_to_slice(&self, slice: &mut [f32]) {
         slice[0] = self.x_axis.x;
         slice[1] = self.x_axis.y;
@@ -271,6 +275,7 @@ impl Mat2 {
     /// Panics if `slice` is less than 4 elements long.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub const fn from_rows_slice(slice: &[f32]) -> Self {
         Self::new(slice[0], slice[2], slice[1], slice[3])
     }
@@ -282,6 +287,7 @@ impl Mat2 {
     /// Panics if `index` is greater than 1.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub fn col(&self, index: usize) -> Vec2 {
         match index {
             0 => self.x_axis,
@@ -296,6 +302,7 @@ impl Mat2 {
     ///
     /// Panics if `index` is greater than 1.
     #[inline]
+    #[track_caller]
     pub fn col_mut(&mut self, index: usize) -> &mut Vec2 {
         match index {
             0 => &mut self.x_axis,
@@ -313,6 +320,7 @@ impl Mat2 {
     /// Panics if `index` is greater than 1.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub fn row(&self, index: usize) -> Vec2 {
         match index {
             0 => Vec2::new(self.x_axis.x, self.y_axis.x),
@@ -331,6 +339,7 @@ impl Mat2 {
     ///
     /// Panics if `index` is greater than 1.
     #[inline]
+    #[track_caller]
     pub fn set_row(&mut self, index: usize, row: Vec2) {
         match index {
             0 => {
@@ -384,14 +393,7 @@ impl Mat2 {
     #[inline]
     #[must_use]
     pub fn determinant(&self) -> f32 {
-        unsafe {
-            let abcd = self.0;
-            let badc = vrev64q_f32(abcd);
-            let dcba = vextq_f32(badc, badc, 2);
-            let prod = vmulq_f32(abcd, dcba);
-            let det = vsubq_f32(prod, vdupq_laneq_f32(prod, 1));
-            vgetq_lane_f32(det, 0)
-        }
+        self.x_axis.x * self.y_axis.y - self.x_axis.y * self.y_axis.x
     }
 
     /// If `CHECKED` is true then if the determinant is zero this function will return a tuple
@@ -399,67 +401,71 @@ impl Mat2 {
     /// inverted matrix and true is returned.
     ///
     /// If `CHECKED` is false then the determinant is not checked and if it is zero the resulting
-    /// inverted matrix will be invalid. Will panic if the determinant of `self` is zero when
-    /// `glam_assert` is enabled.
+    /// inverted matrix will be invalid. Will panic if the resulting inverted matrix is not finite
+    /// when `glam_assert` is enabled.
     ///
     /// A tuple containing the inverted matrix and a bool is used instead of an option here as
     /// regular Rust enums put the discriminant first which can result in a lot of padding if the
     /// matrix is aligned.
     #[inline(always)]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     fn inverse_checked<const CHECKED: bool>(&self) -> (Self, bool) {
         unsafe {
-            use crate::Vec4;
             const SIGN: float32x4_t = crate::neon::f32x4_from_array([1.0, -1.0, -1.0, 1.0]);
             let abcd = self.0;
-            let badc = vrev64q_f32(abcd);
-            let dcba = vextq_f32(badc, badc, 2);
-            let prod = vmulq_f32(abcd, dcba);
-            let sub = vsubq_f32(prod, vdupq_laneq_f32(prod, 1));
-            let det = vdupq_laneq_f32(sub, 0);
-            if CHECKED {
-                if Vec4(det) == Vec4::ZERO {
-                    return (Self::ZERO, false);
-                }
-            } else {
-                glam_assert!(Vec4(det).cmpne(Vec4::ZERO).all());
-            }
-            let tmp = vdivq_f32(SIGN, det);
+            let ab = vget_low_f32(abcd);
+            let cd = vget_high_f32(abcd);
+            let ad = vmul_lane_f32(ab, cd, 1);
+            let bc = vmul_lane_f32(cd, ab, 1);
+            let det = vget_lane_f32(vsub_f32(ad, bc), 0);
+            let tmp = vmulq_n_f32(SIGN, 1.0f32 / det);
             let dbca = vsetq_lane_f32(
                 vgetq_lane_f32(abcd, 0),
                 vsetq_lane_f32(vgetq_lane_f32(abcd, 3), abcd, 0),
                 3,
             );
-            (Self(vmulq_f32(dbca, tmp)), true)
+            let m = Self(vmulq_f32(dbca, tmp));
+            if CHECKED {
+                if !m.is_finite() {
+                    return (Self::ZERO, false);
+                }
+            } else {
+                glam_assert!(m.is_finite());
+            }
+            (m, true)
         }
     }
 
     /// Returns the inverse of `self`.
     ///
-    /// If the matrix is not invertible the returned matrix will be invalid.
+    /// If the matrix is not invertible the returned matrix will be invalid. The
+    /// returned matrix will also be invalid if the inverse is not finite, which can
+    /// happen when `self` contains very large or very small values. Use
+    /// [`Self::try_inverse`] or [`Self::inverse_or_zero`] to detect these cases.
     ///
     /// # Panics
     ///
-    /// Will panic if the determinant of `self` is zero when `glam_assert` is enabled.
+    /// Will panic if the resulting inverted matrix is not finite when `glam_assert`
+    /// is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn inverse(&self) -> Self {
         self.inverse_checked::<false>().0
     }
 
-    /// Returns the inverse of `self` or `None` if the matrix is not invertible.
+    /// Returns the inverse of `self` or `None` if the matrix is not invertible, or if
+    /// the inverse is not finite.
     #[inline]
     #[must_use]
     pub fn try_inverse(&self) -> Option<Self> {
         let (m, is_valid) = self.inverse_checked::<true>();
-        if is_valid {
-            Some(m)
-        } else {
-            None
-        }
+        if is_valid { Some(m) } else { None }
     }
 
-    /// Returns the inverse of `self` or `Mat2::ZERO` if the matrix is not invertible.
+    /// Returns the inverse of `self` or `Mat2::ZERO` if the matrix is not
+    /// invertible, or if the inverse is not finite.
     #[inline]
     #[must_use]
     pub fn inverse_or_zero(&self) -> Self {

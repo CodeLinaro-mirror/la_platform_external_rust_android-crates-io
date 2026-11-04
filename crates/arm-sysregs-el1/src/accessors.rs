@@ -10,6 +10,7 @@
 #[allow(unused_imports)]
 use arm_sysregs_common::{read_sysreg, read_write_sysreg, write_sysreg};
 
+read_write_sysreg!(accdata_el1: s3_0_c13_c0_5, u64: crate::registers::AccdataEl1, safe_read, crate::fake::SYSREGS);
 read_write_sysreg!(actlr_el1, u64, safe_read, crate::fake::SYSREGS);
 read_write_sysreg!(afsr0_el1, u64, safe_read, crate::fake::SYSREGS);
 read_write_sysreg!(afsr1_el1, u64, safe_read, crate::fake::SYSREGS);
@@ -62,6 +63,7 @@ write_sysreg!(icc_sgi1r_el1: s3_0_c12_c11_5, u64: crate::registers::IccSgi1rEl1,
 read_write_sysreg!(icc_sre_el1: s3_0_c12_c12_5, u64: crate::registers::IccSreEl1, safe_read, crate::fake::SYSREGS);
 read_sysreg!(id_aa64dfr0_el1, u64: crate::registers::IdAa64dfr0El1, safe, crate::fake::SYSREGS);
 read_sysreg!(id_aa64dfr1_el1, u64: crate::registers::IdAa64dfr1El1, safe, crate::fake::SYSREGS);
+read_sysreg!(id_aa64isar0_el1, u64: crate::registers::IdAa64isar0El1, safe, crate::fake::SYSREGS);
 read_sysreg!(id_aa64isar1_el1, u64: crate::registers::IdAa64isar1El1, safe, crate::fake::SYSREGS);
 read_sysreg!(id_aa64isar2_el1, u64: crate::registers::IdAa64isar2El1, safe, crate::fake::SYSREGS);
 read_sysreg!(id_aa64isar3_el1, u64: crate::registers::IdAa64isar3El1, safe, crate::fake::SYSREGS);

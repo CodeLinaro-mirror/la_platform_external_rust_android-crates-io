@@ -19,6 +19,7 @@ anstyle
 anstyle-parse
 anstyle-query
 anyhow
+aom-roar
 appendlist
 approx
 arbitrary
@@ -387,6 +388,7 @@ nix
 no-panic
 no_denormals
 nom
+nonblock
 normpath
 nu-ansi-term
 num-bigint
@@ -483,6 +485,7 @@ raw-cpuid
 rayon
 rayon-core
 read-fonts
+realfft
 ref-cast
 ref-cast-impl
 regex
@@ -494,6 +497,7 @@ relative-path
 remain
 reqwest
 ring
+rmesg
 rstest
 rstest_macros
 rtnetlink
@@ -673,7 +677,6 @@ vhost-device-vsock
 vhost-user-backend
 virtio-bindings
 virtio-drivers
-virtio-drivers-and-devices
 virtio-queue
 virtio-vsock
 vm-memory

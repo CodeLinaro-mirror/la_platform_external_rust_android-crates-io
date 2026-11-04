@@ -592,6 +592,47 @@ mod service {
     }
 
     #[tokio::test]
+    async fn stop_without_endpoints() {
+        let server = nats_server::run_basic_server();
+        let client = async_nats::connect(server.client_url()).await.unwrap();
+
+        let service = client
+            .service_builder()
+            .start("service", "1.0.0")
+            .await
+            .unwrap();
+
+        service.stop().await.unwrap();
+        client.flush().await.unwrap();
+
+        // a stopped service answers no discovery request
+        let err = client.request("$SRV.PING", "".into()).await.unwrap_err();
+        assert_eq!(err.kind(), async_nats::RequestErrorKind::NoResponders);
+    }
+
+    #[tokio::test]
+    async fn stop_after_endpoint_dropped() {
+        let server = nats_server::run_basic_server();
+        let client = async_nats::connect(server.client_url()).await.unwrap();
+
+        let service = client
+            .service_builder()
+            .start("service", "1.0.0")
+            .await
+            .unwrap();
+
+        let endpoint = service.endpoint("products").await.unwrap();
+        drop(endpoint);
+
+        service.stop().await.unwrap();
+        client.flush().await.unwrap();
+
+        // a stopped service answers no discovery request
+        let err = client.request("$SRV.PING", "".into()).await.unwrap_err();
+        assert_eq!(err.kind(), async_nats::RequestErrorKind::NoResponders);
+    }
+
+    #[tokio::test]
     #[cfg(not(target_os = "windows"))]
     async fn cross_clients_tests() {
         use std::process::Command;
@@ -652,5 +693,34 @@ mod service {
         // check the correct error was returned
         assert_eq!(err.kind(), PublishErrorKind::InvalidSubject);
         assert!(err.source().is_some());
+    }
+
+    #[tokio::test]
+    async fn verbs_missing_reply_subject() {
+        let server = nats_server::run_basic_server();
+        let client = async_nats::connect(server.client_url()).await.unwrap();
+
+        let _service = client
+            .service_builder()
+            .start("service", "1.0.0")
+            .await
+            .unwrap();
+
+        // publish without reply
+        for verb in ["PING", "INFO", "STATS"] {
+            client
+                .publish(format!("$SRV.{verb}"), "".into())
+                .await
+                .unwrap();
+        }
+        client.flush().await.unwrap();
+
+        // the service still answers every verb
+        for verb in ["PING", "INFO", "STATS"] {
+            client
+                .request(format!("$SRV.{verb}"), "".into())
+                .await
+                .unwrap();
+        }
     }
 }

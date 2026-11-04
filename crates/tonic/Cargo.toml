@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.88"
 name = "tonic"
-version = "0.14.8"
+version = "0.14.9"
 authors = ["gRPC authors"]
 build = false
 exclude = ["benches-disabled"]
@@ -192,7 +192,7 @@ version = "1"
 version = "0.1"
 
 [dependencies.hyper]
-version = "1"
+version = "1.10"
 features = [
     "http1",
     "http2",
