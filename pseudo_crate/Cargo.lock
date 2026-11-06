@@ -93,7 +93,7 @@ dependencies = [
  "rustix-openpty",
  "serde",
  "signal-hook",
- "unicode-width 0.2.2",
+ "unicode-width 0.2.3",
  "vte",
  "windows-sys 0.59.0",
 ]
@@ -657,6 +657,7 @@ dependencies = [
  "ptr_meta",
  "ptr_meta_derive",
  "pxfm",
+ "qrcode",
  "quiche",
  "quick-error",
  "quick-xml 0.41.0",
@@ -2376,7 +2377,7 @@ checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.1.14",
+ "unicode-width 0.2.3",
 ]
 
 [[package]]
@@ -8284,6 +8285,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+dependencies = [
+ "image 0.25.10",
+]
+
+[[package]]
 name = "quiche"
 version = "0.24.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8986,9 +8996,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.41.0"
+version = "0.41.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c026b4444579e8d754556c6c75d040d69c4a44283cdb648ab8a8d5965c2cfa8"
+checksum = "da9bba6f3506135e120a6586df05be18b48d18896600646a4bec8f993d91a594"
 dependencies = [
  "bitflags 2.13.2",
  "fallible-iterator",

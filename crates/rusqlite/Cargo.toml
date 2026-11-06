@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.89.0"
 name = "rusqlite"
-version = "0.41.0"
+version = "0.41.1"
 authors = ["The rusqlite developers"]
 build = false
 exclude = [
