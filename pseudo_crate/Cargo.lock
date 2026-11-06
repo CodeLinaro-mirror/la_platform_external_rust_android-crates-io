@@ -93,7 +93,7 @@ dependencies = [
  "rustix-openpty",
  "serde",
  "signal-hook",
- "unicode-width 0.2.2",
+ "unicode-width 0.2.3",
  "vte",
  "windows-sys 0.59.0",
 ]
@@ -657,6 +657,7 @@ dependencies = [
  "ptr_meta",
  "ptr_meta_derive",
  "pxfm",
+ "qrcode",
  "quiche",
  "quick-error",
  "quick-xml 0.41.0",
@@ -883,7 +884,7 @@ dependencies = [
  "windows_x86_64_gnu 0.53.1",
  "windows_x86_64_gnullvm 0.53.1",
  "windows_x86_64_msvc 0.53.1",
- "winnow 1.0.4",
+ "winnow 1.0.5",
  "writeable",
  "wyz",
  "x509-cert",
@@ -1354,7 +1355,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "unicode-ident",
- "winnow 1.0.4",
+ "winnow 1.0.5",
 ]
 
 [[package]]
@@ -2376,7 +2377,7 @@ checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.1.14",
+ "unicode-width 0.2.3",
 ]
 
 [[package]]
@@ -2456,7 +2457,7 @@ dependencies = [
  "serde_core",
  "serde_json",
  "toml",
- "winnow 1.0.4",
+ "winnow 1.0.5",
  "yaml-rust2",
 ]
 
@@ -8284,6 +8285,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+dependencies = [
+ "image 0.25.10",
+]
+
+[[package]]
 name = "quiche"
 version = "0.24.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10748,7 +10758,7 @@ dependencies = [
  "toml_datetime 1.1.2+spec-1.1.0",
  "toml_parser",
  "toml_writer",
- "winnow 1.0.4",
+ "winnow 1.0.5",
 ]
 
 [[package]]
@@ -10787,7 +10797,7 @@ dependencies = [
  "toml_datetime 1.1.2+spec-1.1.0",
  "toml_parser",
  "toml_writer",
- "winnow 1.0.4",
+ "winnow 1.0.5",
 ]
 
 [[package]]
@@ -10796,7 +10806,7 @@ version = "1.1.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
- "winnow 1.0.4",
+ "winnow 1.0.5",
 ]
 
 [[package]]
@@ -12498,9 +12508,9 @@ dependencies = [
 
 [[package]]
 name = "winnow"
-version = "1.0.4"
+version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
+checksum = "8c3b93199df0ab874cdf0c6a94f0a0dc3423fe41f1cafb62b8bd7b1deb277aef"
 dependencies = [
  "memchr",
 ]
