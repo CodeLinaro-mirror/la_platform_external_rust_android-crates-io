@@ -260,7 +260,7 @@ dependencies = [
 
 [[package]]
 name = "openssh-sftp-client"
-version = "0.15.11"
+version = "0.15.12"
 dependencies = [
  "bytes",
  "derive_destructure2",
@@ -664,6 +664,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]
