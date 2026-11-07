@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1
+
+### Improvements
+
+- `Uart::new` is now a const function.
+
+### Other changes
+
+- Updated the MSRV to 1.88.
+
 ## 0.5.0
 
 ### Breaking changes
