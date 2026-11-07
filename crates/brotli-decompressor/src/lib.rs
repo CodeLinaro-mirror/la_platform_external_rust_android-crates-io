@@ -414,7 +414,7 @@ pub fn brotli_decode(
     output_and_scratch: &mut[u8],
 ) -> BrotliDecoderReturnInfo {
   let mut stack_u32_buffer = [0u32; 12 * 1024 * 6];
-  let mut stack_hc_buffer = [HuffmanCode::default(); 128 * (decode::kNumInsertAndCopyCodes as usize + decode::kNumLiteralCodes as usize) + 6 * decode::kNumBlockLengthCodes as usize * huffman::BROTLI_HUFFMAN_MAX_TABLE_SIZE as usize];
+  let mut stack_hc_buffer = [HuffmanCode::default(); 128 * (decode::kNumInsertAndCopyCodes as usize + decode::kNumLiteralCodes as usize) + 6 * decode::kNumBlockLengthCodes as usize * huffman::INSERT_COPY_TABLE_WINDOW];
   let mut guessed_output_size = core::cmp::min(
     core::cmp::max(input.len(), // shouldn't shrink too much
                    output_and_scratch.len() / 3),
@@ -457,15 +457,30 @@ pub fn brotli_decode(
 #[cfg(feature="std")]
 pub fn brotli_decode(
     input: &[u8],
+    output: &mut[u8],
+) -> BrotliDecoderReturnInfo {
+  brotli_decode_with_allocators(input, output,
+                                StandardAlloc::default(),
+                                StandardAlloc::default(),
+                                StandardAlloc::default())
+}
+
+#[cfg(feature="std")]
+pub(crate) fn brotli_decode_with_allocators<AllocU8: Allocator<u8>,
+                                            AllocU32: Allocator<u32>,
+                                            AllocHC: Allocator<HuffmanCode>>(
+    input: &[u8],
     mut output: &mut[u8],
+    alloc_u8: AllocU8,
+    alloc_u32: AllocU32,
+    alloc_hc: AllocHC,
 ) -> BrotliDecoderReturnInfo {
   let mut available_out = output.len();
   let mut available_in: usize = input.len();
   let mut input_offset: usize = 0;
   let mut output_offset: usize = 0;
   let mut written: usize = 0;
-  let mut brotli_state =
-    BrotliState::new(StandardAlloc::default(), StandardAlloc::default(), StandardAlloc::default());
+  let mut brotli_state = BrotliState::new(alloc_u8, alloc_u32, alloc_hc);
   let result = ::BrotliDecompressStream(&mut available_in,
                                       &mut input_offset,
                                       &input[..],
