@@ -18,7 +18,7 @@ rust_library {
     host_supported: true,
     crate_name: "async_nats",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.51.0",
+    cargo_pkg_version: "0.52.0",
     crate_root: "src/lib.rs",
     edition: "2021",
     features: [
