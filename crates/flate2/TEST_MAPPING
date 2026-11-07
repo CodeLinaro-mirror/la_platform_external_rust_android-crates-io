@@ -47,6 +47,18 @@
   "postsubmit": [
     {
       "name": "flate2_test_tests_capabilities"
+    },
+    {
+      "name": "flate2_test_tests_gzip-read-errors"
+    },
+    {
+      "name": "flate2_test_tests_partial-write"
+    },
+    {
+      "name": "flate2_test_tests_write-after-finish"
+    },
+    {
+      "name": "flate2_test_tests_zlib-rs-uninit"
     }
   ]
 }

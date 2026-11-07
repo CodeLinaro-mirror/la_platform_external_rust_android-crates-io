@@ -50,3 +50,16 @@ index 5a99b0eb7..3867095a0 100644
  
      use crate::zlib::{read, write};
      use crate::Compression;
+diff --git a/tests/partial-write.rs b/tests/partial-write.rs
+--- a/tests/partial-write.rs
++++ b/tests/partial-write.rs
+@@ -2,7 +2,7 @@ use flate2::read::DeflateDecoder;
+ use flate2::write::DeflateEncoder;
+ use flate2::Compression;
+ use rand::rngs::StdRng;
+-use rand::{Rng, SeedableRng};
++use rand::{prelude::*, SeedableRng};
+ use std::io::{self, Read, Write};
+ 
+ /// Accepts at most seven bytes per write and returns one `Interrupted` error
+
