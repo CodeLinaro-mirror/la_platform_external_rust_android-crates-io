@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.89.0"
 name = "async-nats"
-version = "0.51.0"
+version = "0.52.0"
 authors = [
     "Tomasz Pietrek <tomasz@nats.io>",
     "Casper Beyer <caspervonb@pm.me>",
