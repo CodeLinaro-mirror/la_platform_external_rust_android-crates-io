@@ -98,7 +98,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "async-nats"
-version = "0.51.0"
+version = "0.52.0"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
