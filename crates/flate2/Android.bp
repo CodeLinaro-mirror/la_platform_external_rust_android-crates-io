@@ -17,7 +17,7 @@ rust_test {
     name: "flate2_test_src_lib",
     crate_name: "flate2",
     cargo_env_compat: true,
-    cargo_pkg_version: "1.1.10",
+    cargo_pkg_version: "1.1.11",
     crate_root: "src/lib.rs",
     test_suites: ["general-tests"],
     auto_gen_config: true,
@@ -48,7 +48,7 @@ rust_test {
     host_supported: true,
     crate_name: "capabilities",
     cargo_env_compat: true,
-    cargo_pkg_version: "1.1.10",
+    cargo_pkg_version: "1.1.11",
     crate_root: "tests/capabilities.rs",
     test_suites: ["general-tests"],
     auto_gen_config: true,
@@ -79,7 +79,7 @@ rust_test {
     name: "flate2_test_tests_early-flush",
     crate_name: "early_flush",
     cargo_env_compat: true,
-    cargo_pkg_version: "1.1.10",
+    cargo_pkg_version: "1.1.11",
     crate_root: "tests/early-flush.rs",
     test_suites: ["general-tests"],
     auto_gen_config: true,
@@ -110,7 +110,7 @@ rust_test {
     name: "flate2_test_tests_empty-read",
     crate_name: "empty_read",
     cargo_env_compat: true,
-    cargo_pkg_version: "1.1.10",
+    cargo_pkg_version: "1.1.11",
     crate_root: "tests/empty-read.rs",
     test_suites: ["general-tests"],
     auto_gen_config: true,
@@ -141,7 +141,7 @@ rust_test {
     name: "flate2_test_tests_gunzip",
     crate_name: "gunzip",
     cargo_env_compat: true,
-    cargo_pkg_version: "1.1.10",
+    cargo_pkg_version: "1.1.11",
     crate_root: "tests/gunzip.rs",
     test_suites: ["general-tests"],
     auto_gen_config: true,
@@ -175,11 +175,139 @@ rust_test {
 }
 
 rust_test {
+    name: "flate2_test_tests_gzip-read-errors",
+    host_supported: true,
+    crate_name: "gzip_read_errors",
+    cargo_env_compat: true,
+    cargo_pkg_version: "1.1.11",
+    crate_root: "tests/gzip-read-errors.rs",
+    test_suites: ["general-tests"],
+    auto_gen_config: true,
+    test_options: {
+        unit_test: true,
+    },
+    edition: "2018",
+    features: [
+        "any_impl",
+        "any_zlib",
+        "zlib-rs",
+    ],
+    rustlibs: [
+        "libflate2",
+        "libfutures",
+        "libquickcheck",
+        "librand",
+        "libzlib_rs",
+    ],
+    target: {
+        windows: {
+            enabled: true,
+        },
+    },
+}
+
+rust_test {
+    name: "flate2_test_tests_partial-write",
+    host_supported: true,
+    crate_name: "partial_write",
+    cargo_env_compat: true,
+    cargo_pkg_version: "1.1.11",
+    crate_root: "tests/partial-write.rs",
+    test_suites: ["general-tests"],
+    auto_gen_config: true,
+    test_options: {
+        unit_test: true,
+    },
+    edition: "2018",
+    features: [
+        "any_impl",
+        "any_zlib",
+        "zlib-rs",
+    ],
+    rustlibs: [
+        "libflate2",
+        "libfutures",
+        "libquickcheck",
+        "librand",
+        "libzlib_rs",
+    ],
+    target: {
+        windows: {
+            enabled: true,
+        },
+    },
+}
+
+rust_test {
+    name: "flate2_test_tests_write-after-finish",
+    host_supported: true,
+    crate_name: "write_after_finish",
+    cargo_env_compat: true,
+    cargo_pkg_version: "1.1.11",
+    crate_root: "tests/write-after-finish.rs",
+    test_suites: ["general-tests"],
+    auto_gen_config: true,
+    test_options: {
+        unit_test: true,
+    },
+    edition: "2018",
+    features: [
+        "any_impl",
+        "any_zlib",
+        "zlib-rs",
+    ],
+    rustlibs: [
+        "libflate2",
+        "libfutures",
+        "libquickcheck",
+        "librand",
+        "libzlib_rs",
+    ],
+    target: {
+        windows: {
+            enabled: true,
+        },
+    },
+}
+
+rust_test {
     name: "flate2_test_tests_zero-write",
     crate_name: "zero_write",
     cargo_env_compat: true,
-    cargo_pkg_version: "1.1.10",
+    cargo_pkg_version: "1.1.11",
     crate_root: "tests/zero-write.rs",
+    test_suites: ["general-tests"],
+    auto_gen_config: true,
+    test_options: {
+        unit_test: true,
+    },
+    edition: "2018",
+    features: [
+        "any_impl",
+        "any_zlib",
+        "zlib-rs",
+    ],
+    rustlibs: [
+        "libflate2",
+        "libfutures",
+        "libquickcheck",
+        "librand",
+        "libzlib_rs",
+    ],
+    target: {
+        windows: {
+            enabled: true,
+        },
+    },
+}
+
+rust_test {
+    name: "flate2_test_tests_zlib-rs-uninit",
+    host_supported: true,
+    crate_name: "zlib_rs_uninit",
+    cargo_env_compat: true,
+    cargo_pkg_version: "1.1.11",
+    crate_root: "tests/zlib-rs-uninit.rs",
     test_suites: ["general-tests"],
     auto_gen_config: true,
     test_options: {
@@ -210,7 +338,7 @@ rust_library {
     host_supported: true,
     crate_name: "flate2",
     cargo_env_compat: true,
-    cargo_pkg_version: "1.1.10",
+    cargo_pkg_version: "1.1.11",
     crate_root: "src/lib.rs",
     edition: "2018",
     features: [
