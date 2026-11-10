@@ -44,13 +44,14 @@ impl<T: RefCnt> HybridProtection<T> {
         // we need to timeline it before the debt gets paid.
         let ptr = storage.load(SeqCst);
         // Try to get a debt slot. If not possible, fail.
-        let debt = node.new_fast(ptr as usize)?;
+        let debt = node.new_fast(Debt::encode::<T>(ptr), storage as *const _ as usize)?;
 
         // Acquire to get the data.
         //
         // SeqCst to make sure the storage vs. the debt are well ordered.
         let confirm = storage.load(SeqCst);
         if ptr == confirm {
+            debt.mark_confirmed();
             // Successfully got a debt
             // NOTE: we *must* use `confirm` here instead of `ptr`. The address may compare equal,
             // but they could have different provenance, if the pointer is freed and then
@@ -61,9 +62,10 @@ impl<T: RefCnt> HybridProtection<T> {
             // possibly destroyed) and fail.
             None
         } else {
-            // It changed in the meantime, but the debt for the previous pointer was already paid
-            // for by someone else, so we are fine using it.
-            Some(unsafe { Self::new(ptr, None) })
+            // It changed in the meantime, but a writer of this storage already paid the debt for
+            // the previous pointer, so we are fine using it. Re-derived from the address, as `ptr`
+            // may carry the provenance of a freed object at the same address.
+            Some(unsafe { Self::new(ptr as usize as *const _, None) })
         }
     }
 
@@ -78,7 +80,7 @@ impl<T: RefCnt> HybridProtection<T> {
 
         // Try to replace the debt with our candidate. If it works, we get the debt slot to use. If
         // not, we get a replacement value, already protected and a debt to take care of.
-        match node.confirm_helping(gen, candidate as usize) {
+        match node.confirm_helping(gen, Debt::encode::<T>(candidate)) {
             Ok(debt) => {
                 // The fast path -> we got the debt confirmed alright.
                 Self::from_inner(unsafe { Self::new(candidate, Some(debt)).into_inner() })
@@ -87,7 +89,9 @@ impl<T: RefCnt> HybridProtection<T> {
                 // The debt is on the candidate we provided and it is unused, we so we just pay it
                 // back right away.
                 if !unused_debt.pay::<T>(candidate) {
-                    unsafe { T::dec(candidate) };
+                    // Re-derived from the address, as `candidate` may carry the provenance of a
+                    // freed object at the same address.
+                    unsafe { T::dec(candidate as usize as *const _) };
                 }
                 // We got a (possibly) different pointer out. But that one is already protected and
                 // the slot is paid back.
