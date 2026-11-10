@@ -18,10 +18,13 @@ rust_library {
     host_supported: true,
     crate_name: "libm",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.2.11",
+    cargo_pkg_version: "0.2.16",
     crate_root: "src/lib.rs",
     edition: "2021",
-    features: ["default"],
+    features: [
+        "arch",
+        "default",
+    ],
     apex_available: [
         "//apex_available:platform",
         "//apex_available:anyapex",
@@ -29,21 +32,4 @@ rust_library {
     product_available: true,
     vendor_available: true,
     min_sdk_version: "29",
-}
-
-rust_test {
-    name: "libm_test_src_lib",
-    host_supported: true,
-    crate_name: "libm",
-    cargo_env_compat: true,
-    cargo_pkg_version: "0.2.11",
-    crate_root: "src/lib.rs",
-    test_suites: ["general-tests"],
-    auto_gen_config: true,
-    test_options: {
-        unit_test: true,
-    },
-    edition: "2021",
-    features: ["default"],
-    proc_macros: ["libno_panic"],
 }

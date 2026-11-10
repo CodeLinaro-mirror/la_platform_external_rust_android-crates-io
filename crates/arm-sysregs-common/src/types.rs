@@ -3,6 +3,7 @@
 
 //! Types used by the system register crates.
 
+use bitflags::bitflags;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 /// An AArch64 exception level.
@@ -97,5 +98,110 @@ impl From<CacheLevel> for u32 {
 impl From<CacheLevel> for u64 {
     fn from(value: CacheLevel) -> Self {
         u32::from(value).into()
+    }
+}
+
+/// Uniquely identifies a sysreg.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct EsrIssSysregId(u32);
+
+impl EsrIssSysregId {
+    /// Creates new instance from encoding components.
+    pub const fn new(op0: u32, op1: u32, crn: u32, crm: u32, op2: u32) -> Self {
+        assert!(op0 == op0 & EsrIssSysreg::OP0_MASK);
+        assert!(op1 == op1 & EsrIssSysreg::OP1_MASK);
+        assert!(crn == crn & EsrIssSysreg::CRN_MASK);
+        assert!(crm == crm & EsrIssSysreg::CRM_MASK);
+        assert!(op2 == op2 & EsrIssSysreg::OP2_MASK);
+        Self(
+            op0 << EsrIssSysreg::OP0_SHIFT
+                | op1 << EsrIssSysreg::OP1_SHIFT
+                | crn << EsrIssSysreg::CRN_SHIFT
+                | crm << EsrIssSysreg::CRM_SHIFT
+                | op2 << EsrIssSysreg::OP2_SHIFT,
+        )
+    }
+}
+
+impl From<EsrIssSysreg> for EsrIssSysregId {
+    fn from(value: EsrIssSysreg) -> Self {
+        value.sysreg_id()
+    }
+}
+
+/// Represents the transfer direction of trapped sysreg accesses.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum EsrIssSysregDir {
+    /// Write access, including MSR instructions.
+    Write,
+    /// Read access, including MRS instructions.
+    Read,
+}
+
+bitflags! {
+    /// ESR_ELx.ISS encoding for an exception from MSR, MRS, or System instruction execution in AArch64 state
+    #[derive(Clone, Copy, Eq, Default, PartialEq)]
+    #[repr(transparent)]
+    pub struct EsrIssSysreg: u32 {
+    }
+}
+
+impl EsrIssSysreg {
+    /// Register number of XZR.
+    pub const XZR_REG_NUM: u8 = 31;
+
+    /// Offset of the `Op0` field.
+    const OP0_SHIFT: u32 = 20;
+    /// Mask for the `Op0` field.
+    const OP0_MASK: u32 = 0b11;
+    /// Offset of the `Op2` field.
+    const OP2_SHIFT: u32 = 17;
+    /// Mask for the `Op2` field.
+    const OP2_MASK: u32 = 0b111;
+    /// Offset of the `Op1` field.
+    const OP1_SHIFT: u32 = 14;
+    /// Mask for the `Op1` field.
+    const OP1_MASK: u32 = 0b111;
+    /// Offset of the `CRn` field.
+    const CRN_SHIFT: u32 = 10;
+    /// Mask for the `CRn` field.
+    const CRN_MASK: u32 = 0b1111;
+    /// Offset of the `Rt` field.
+    const RT_SHIFT: u32 = 5;
+    /// Mask for the `Rt` field.
+    const RT_MASK: u32 = 0b11111;
+    /// Offset of the `CRm` field.
+    const CRM_SHIFT: u32 = 1;
+    /// Mask for the `CRm` field.
+    const CRM_MASK: u32 = 0b1111;
+    /// Offset of the `Direction` field.
+    const DIR_SHIFT: u32 = 0;
+    /// Mask for the `Direction` field.
+    const DIR_MASK: u32 = 0b1;
+
+    /// Mask for the parts containing the sysreg ID: all fields except `Rt` and `DIR`.
+    const SYSREG_MASK: u32 = (Self::OP0_MASK << Self::OP0_SHIFT)
+        | (Self::OP2_MASK << Self::OP2_SHIFT)
+        | (Self::OP1_MASK << Self::OP1_SHIFT)
+        | (Self::CRN_MASK << Self::CRN_SHIFT)
+        | (Self::CRM_MASK << Self::CRM_SHIFT);
+
+    /// Returns the opcode.
+    pub const fn sysreg_id(self) -> EsrIssSysregId {
+        EsrIssSysregId(self.bits() & Self::SYSREG_MASK)
+    }
+
+    /// Returns the value of the `Rt` field.
+    pub const fn rt(self) -> u8 {
+        ((self.bits() >> Self::RT_SHIFT) & Self::RT_MASK) as u8
+    }
+
+    /// Returns the value of the `Direction` field.
+    pub const fn dir(self) -> EsrIssSysregDir {
+        if ((self.bits() >> Self::DIR_SHIFT) & Self::DIR_MASK) != 0 {
+            EsrIssSysregDir::Read
+        } else {
+            EsrIssSysregDir::Write
+        }
     }
 }

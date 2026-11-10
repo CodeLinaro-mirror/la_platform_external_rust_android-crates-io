@@ -1,0 +1,13 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index d87767c..9ae9df7 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -33,7 +33,7 @@ keywords = [
+     "math",
+ ]
+ categories = ["no-std"]
+-license = "MIT"
++license = "MIT AND (MIT OR Apache-2.0)"
+ repository = "https://github.com/rust-lang/compiler-builtins"
+ 
+ [features]

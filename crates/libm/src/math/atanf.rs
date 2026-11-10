@@ -29,14 +29,19 @@ const ATAN_LO: [f32; 4] = [
     7.5497894159e-08, /* atan(inf)lo 0x33a22168 */
 ];
 
-const A_T: [f32; 5] =
-    [3.3333328366e-01, -1.9999158382e-01, 1.4253635705e-01, -1.0648017377e-01, 6.1687607318e-02];
+const A_T: [f32; 5] = [
+    3.3333328366e-01,
+    -1.9999158382e-01,
+    1.4253635705e-01,
+    -1.0648017377e-01,
+    6.1687607318e-02,
+];
 
 /// Arctangent (f32)
 ///
 /// Computes the inverse tangent (arc tangent) of the input value.
 /// Returns a value in radians, in the range of -pi/2 to pi/2.
-#[cfg_attr(all(test, assert_no_panic), no_panic::no_panic)]
+#[cfg_attr(assert_no_panic, no_panic::no_panic)]
 pub fn atanf(mut x: f32) -> f32 {
     let x1p_120 = f32::from_bits(0x03800000); // 0x1p-120 === 2 ^ (-120)
 

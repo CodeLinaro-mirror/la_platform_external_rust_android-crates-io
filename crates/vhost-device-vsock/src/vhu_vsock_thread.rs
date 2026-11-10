@@ -264,6 +264,7 @@ impl VhostUserVsockThread {
         if self.active {
             return;
         }
+        log::debug!("Activating device");
         self.active = true;
 
         // Add the raw_pkts queue to the map to begin accepting packets from sibling VMs
@@ -369,13 +370,6 @@ impl VhostUserVsockThread {
                                     local_port,
                                     peer_port,
                                 );
-                                if let Err(err) = Self::epoll_register(
-                                    self.get_epoll_fd(),
-                                    stream_raw_fd,
-                                    epoll::Events::EPOLLIN | epoll::Events::EPOLLOUT,
-                                ) {
-                                    warn!("Failed to register with epoll: {err:?}");
-                                }
                             }
                             Err(err) => {
                                 warn!("Unable to accept new local connection: {err:?}");
@@ -436,13 +430,13 @@ impl VhostUserVsockThread {
 
                         self.add_new_connection_from_host(fd, stream, local_port, peer_port);
 
-                        // Re-register the fd to listen for EPOLLIN and EPOLLOUT events
-                        Self::epoll_modify(
-                            self.get_epoll_fd(),
-                            fd,
-                            epoll::Events::EPOLLIN | epoll::Events::EPOLLOUT,
-                        )
-                        .unwrap();
+                        // wait till guest accepts connection before forwarding data
+                        if let Err(err) = Self::epoll_unregister(self.get_epoll_fd(), fd) {
+                            warn!(
+                                "Failed to unregister local stream before guest response: {:?}",
+                                err
+                            );
+                        }
                     }
                 }
             } else {
@@ -460,6 +454,9 @@ impl VhostUserVsockThread {
                             if cnt > 0 {
                                 conn.fwd_cnt += Wrapping(cnt as u32);
                                 conn.rx_queue.enqueue(RxOps::CreditUpdate);
+                                self.thread_backend
+                                    .backend_rxq
+                                    .push_back(ConnMapKey::new(conn.local_port, conn.peer_port));
                             } else {
                                 // If no remaining data to flush, try to disable EPOLLOUT
                                 if Self::epoll_modify(epoll_fd, fd, epoll::Events::EPOLLIN).is_err()
@@ -467,12 +464,21 @@ impl VhostUserVsockThread {
                                     error!("Failed to disable EPOLLOUT");
                                 }
                             }
-                            self.thread_backend
-                                .backend_rxq
-                                .push_back(ConnMapKey::new(conn.local_port, conn.peer_port));
                         }
                         Err(e) => {
                             log::debug!("Error: {e:?}");
+                            if !matches!(
+                                &e,
+                                Error::LocalTxBufFlush(io_err)
+                                    if io_err.kind() == std::io::ErrorKind::WouldBlock
+                                        || io_err.kind() == std::io::ErrorKind::Interrupted
+                            ) {
+                                let _ = Self::epoll_unregister(epoll_fd, fd);
+                                conn.rx_queue.enqueue(RxOps::Reset);
+                                self.thread_backend
+                                    .backend_rxq
+                                    .push_back(ConnMapKey::new(conn.local_port, conn.peer_port));
+                            }
                         }
                     }
                     return;
@@ -791,7 +797,7 @@ impl VhostUserVsockThread {
             } else {
                 // A tx packet can only arrive before we're active if it was sent before a
                 // transport reset completed.
-                warn!("vsock: Dropping packet received before reset completes");
+                warn!("vsock: Dropping tx packet received before reset completes");
             }
 
             // TODO: Check if the protocol requires read length to be correct
@@ -843,6 +849,10 @@ impl VhostUserVsockThread {
     pub fn reset_transport(&mut self, vring: &VringRwLock, event_idx: bool) -> Result<bool> {
         let mut vring_mut = vring.get_mut();
         let queue = vring_mut.get_queue_mut();
+
+        if !queue.ready() {
+            return Ok(false);
+        }
 
         let atomic_mem = match &self.mem {
             Some(m) => m,
@@ -1095,6 +1105,15 @@ mod tests {
         );
 
         t.mem = Some(mem.clone());
+
+        // A host client that disconnects before sending "connect PORT\n" must
+        // be removed from stream_map rather than leaking its fd.
+        let uds_aborted = UnixStream::connect(&vsock_path).unwrap();
+        t.process_backend_evt(EventSet::empty());
+        assert_eq!(t.thread_backend.stream_map.len(), 1);
+        drop(uds_aborted);
+        t.process_backend_evt(EventSet::empty());
+        assert!(t.thread_backend.stream_map.is_empty());
 
         let mut uds = UnixStream::connect(vsock_path).unwrap();
         t.process_backend_evt(EventSet::empty());

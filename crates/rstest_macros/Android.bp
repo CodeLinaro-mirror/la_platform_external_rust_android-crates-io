@@ -17,7 +17,7 @@ rust_proc_macro {
     name: "librstest_macros",
     crate_name: "rstest_macros",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.27.0",
+    cargo_pkg_version: "0.28.0",
     crate_root: "src/lib.rs",
     edition: "2021",
     rustlibs: [

@@ -6,11 +6,11 @@
 #[cfg(any(test, feature = "fakes", target_arch = "aarch64"))]
 use crate::accessors::read_mpidr_el1;
 use crate::registers::{
-    ClidrEl1, CsselrEl1, EsrEl1, IdAa64dfr0El1, IdAa64dfr1El1, IdAa64mmfr0El1, IdAa64mmfr1El1,
-    IdAa64mmfr2El1, IdAa64mmfr3El1, IdAa64mmfr4El1, IdAa64pfr0El1, IdAa64pfr1El1, IdAa64pfr2El1,
-    MpidrEl1, SpsrEl1,
+    ClidrEl1, CsselrEl1, EsrEl1, IdAa64dfr0El1, IdAa64dfr1El1, IdAa64isar0El1, IdAa64isar1El1,
+    IdAa64mmfr0El1, IdAa64mmfr1El1, IdAa64mmfr2El1, IdAa64mmfr3El1, IdAa64mmfr4El1, IdAa64pfr0El1,
+    IdAa64pfr1El1, IdAa64pfr2El1, MpidrEl1, SpsrEl1,
 };
-use arm_sysregs_common::types::{CacheLevel, CacheType};
+use arm_sysregs_common::types::{CacheLevel, CacheType, EsrIssSysreg};
 use core::fmt::{self, Debug, Formatter};
 
 impl ClidrEl1 {
@@ -18,7 +18,7 @@ impl ClidrEl1 {
     pub fn icb_level(self) -> Option<CacheLevel> {
         let icb = self.icb();
         if icb != 0 {
-            Some(CacheLevel(icb as u8))
+            Some(CacheLevel(icb))
         } else {
             None
         }
@@ -26,7 +26,7 @@ impl ClidrEl1 {
 
     /// Returns Cache Type [1-7] fields.
     pub fn cache_type(self, level: CacheLevel) -> CacheType {
-        self.ctype(level.level().into()).try_into().unwrap()
+        self.ctype(level.level().into())
     }
 }
 
@@ -54,6 +54,16 @@ impl CsselrEl1 {
 impl EsrEl1 {
     /// Mask for the parts of an ESR value containing the opcode.
     pub const ISS_SYSREG_OPCODE_MASK: Self = Self::from_bits_retain(0x003f_fc1e);
+
+    /// Returns the value of the `ISS` field, as interpreted in the case of an exception from MSR,
+    /// MRS, or System instruction execution in AArch64 state.
+    pub const fn iss_sysreg(self) -> Option<EsrIssSysreg> {
+        if self.ec() == 0b01_1000 {
+            Some(EsrIssSysreg::from_bits_retain(self.iss()))
+        } else {
+            None
+        }
+    }
 }
 
 impl Debug for EsrEl1 {
@@ -118,6 +128,33 @@ impl IdAa64dfr1El1 {
     }
 }
 
+impl IdAa64isar1El1 {
+    const LS64_IMPLEMENTED: u8 = 0b0001;
+    const LS64_V_IMPLEMENTED: u8 = 0b0010;
+    const LS64_ACCDATA_IMPLEMENTED: u8 = 0b0011;
+    const LS64WB_IMPLEMENTED: u8 = 0b0100;
+
+    /// Indicates whether FEAT_LS64 is implemented.
+    pub fn is_feat_ls64_present(self) -> bool {
+        self.ls64() >= Self::LS64_IMPLEMENTED
+    }
+
+    /// Indicates whether FEAT_LS64_V is implemented.
+    pub fn is_feat_ls64_v_present(self) -> bool {
+        self.ls64() >= Self::LS64_V_IMPLEMENTED
+    }
+
+    /// Indicates whether FEAT_LS64_ACCDATA is implemented.
+    pub fn is_feat_ls64_accdata_present(self) -> bool {
+        self.ls64() >= Self::LS64_ACCDATA_IMPLEMENTED
+    }
+
+    /// Indicates whether FEAT_LS64WB is implemented.
+    pub fn is_feat_ls64wb_present(self) -> bool {
+        self.ls64() >= Self::LS64WB_IMPLEMENTED
+    }
+}
+
 impl IdAa64mmfr0El1 {
     const FGT_IMPLEMENTED: u8 = 0b0001;
     const FGT2_IMPLEMENTED: u8 = 0b0010;
@@ -134,11 +171,35 @@ impl IdAa64mmfr0El1 {
 }
 
 impl IdAa64mmfr1El1 {
+    const HAF_IMPLEMENTED: u8 = 0b0001;
+    const HAFDBS_IMPLEMENTED: u8 = 0b0010;
+    const HAFT_IMPLEMENTED: u8 = 0b0011;
+    const HDBSS_IMPLEMENTED: u8 = 0b0100;
     const VH_IMPLEMENTED: u8 = 0b0001;
     const HCX_IMPLEMENTED: u8 = 0b0001;
     const PAN_IMPLEMENTED: u8 = 0b0001;
     const PAN2_IMPLEMENTED: u8 = 0b0010;
     const PAN3_IMPLEMENTED: u8 = 0b0011;
+
+    /// Indicates presence of FEAT_HAF.
+    pub fn is_feat_haf_present(self) -> bool {
+        self.hafdbs() >= Self::HAF_IMPLEMENTED
+    }
+
+    /// Indicates presence of FEAT_HAFDBS.
+    pub fn is_feat_hafdbs_present(self) -> bool {
+        self.hafdbs() >= Self::HAFDBS_IMPLEMENTED
+    }
+
+    /// Indicates presence of FEAT_HAFT.
+    pub fn is_feat_haft_present(self) -> bool {
+        self.hafdbs() >= Self::HAFT_IMPLEMENTED
+    }
+
+    /// Indicates presence of FEAT_HDBSS.
+    pub fn is_feat_hdbss_present(self) -> bool {
+        self.hafdbs() >= Self::HDBSS_IMPLEMENTED
+    }
 
     /// Indicates presence of FEAT_VHE.
     pub fn is_feat_vhe_present(self) -> bool {
@@ -184,6 +245,7 @@ impl IdAa64mmfr3El1 {
     const S2PIE_IMPLEMENTED: u8 = 0b0001;
     const S2POE_IMPLEMENTED: u8 = 0b0001;
     const SCTLR2_IMPLEMENTED: u8 = 0b0001;
+    const MEC_IMPLEMENTED: u8 = 0b0001;
 
     /// Indicates presence of FEAT_SCTLR2.
     pub fn is_feat_sctlr2_present(self) -> bool {
@@ -214,11 +276,22 @@ impl IdAa64mmfr3El1 {
     pub fn is_feat_tcr2_present(self) -> bool {
         self.tcrx() >= Self::TCRX_IMPLEMENTED
     }
+
+    /// Indicates presence of FEAT_MEC.
+    pub fn is_feat_mec_present(self) -> bool {
+        self.mec() >= Self::MEC_IMPLEMENTED
+    }
 }
 
 impl IdAa64mmfr4El1 {
+    const HACDBS_IMPLEMENTED: u8 = 0b0001;
     const FGWTE3_IMPLEMENTED: u8 = 0b0001;
     const RME_GDI_IMPLEMENTED: u8 = 0b0001;
+
+    /// Indicates whether FEAT_HACDBS is implemented.
+    pub fn is_feat_hacdbs_present(self) -> bool {
+        self.hacdbs() >= Self::HACDBS_IMPLEMENTED
+    }
 
     /// Indicates whether FEAT_FGWTE3 is implemented.
     pub fn is_feat_fgwte3_present(self) -> bool {
@@ -315,6 +388,7 @@ impl IdAa64pfr1El1 {
     const NMI_IMPLEMENTED: u8 = 0b0001;
     const GCS_IMPLEMENTED: u8 = 0b0001;
     const PFAR_IMPLEMENTED: u8 = 0b0001;
+    const RNG_TRAP_IMPLEMENTED: u8 = 0b0001;
 
     /// Indicates whether FEAT_PFAR is implemented.
     pub fn is_feat_pfar_present(self) -> bool {
@@ -355,14 +429,25 @@ impl IdAa64pfr1El1 {
     pub fn is_feat_gcs_present(self) -> bool {
         self.gcs() >= Self::GCS_IMPLEMENTED
     }
+
+    /// Indicates whether FEAT_RNG_TRAP is implemented.
+    pub fn is_feat_rng_trap_present(self) -> bool {
+        self.rndr_trap() >= Self::RNG_TRAP_IMPLEMENTED
+    }
 }
 
 impl IdAa64pfr2El1 {
     const FPMR_IMPLEMENTED: u8 = 0b0001;
+    const UINJ_IMPLEMENTED: u8 = 0b0001;
 
     /// Indicates whether FEAT_FPMR is implemented.
     pub fn is_feat_fpmr_present(self) -> bool {
         self.fpmr() >= Self::FPMR_IMPLEMENTED
+    }
+
+    /// Indicates whether FEAT_UINJ is implemented.
+    pub fn is_feat_uinj_present(self) -> bool {
+        self.uinj() >= Self::UINJ_IMPLEMENTED
     }
 }
 
@@ -387,6 +472,15 @@ impl MpidrEl1 {
 impl SpsrEl1 {
     /// All of the N, Z, C and V bits.
     pub const NZCV: Self = Self::V.union(Self::C).union(Self::Z).union(Self::N);
+}
+
+impl IdAa64isar0El1 {
+    const RNG_IMPLEMENTED: u8 = 0b0001;
+
+    /// Indicates whether FEAT_RNG is implemented.
+    pub fn is_feat_rng_present(self) -> bool {
+        self.rndr() >= Self::RNG_IMPLEMENTED
+    }
 }
 
 #[cfg(test)]
@@ -416,9 +510,5 @@ mod tests {
     fn debug_esr_el1() {
         assert_eq!(format!("{:?}", EsrEl1::empty()), "EsrEl1(0x0)");
         assert_eq!(format!("{:?}", EsrEl1::IL), "EsrEl1(0x2000000)");
-        assert_eq!(
-            format!("{:?}", EsrEl1::ISS_SYSREG_OPCODE_MASK),
-            "EsrEl1(0x3ffc1e)"
-        );
     }
 }

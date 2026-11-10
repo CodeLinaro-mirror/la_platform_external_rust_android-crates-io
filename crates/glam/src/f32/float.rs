@@ -1,10 +1,17 @@
 // Generated from float.rs.tera template. Edit the template, not the generated file.
 
-use crate::float::FloatExt;
+use crate::{f32::math, float::FloatExt};
+
+impl crate::sealed::Sealed for f32 {}
 
 impl FloatExt for f32 {
     #[inline]
     fn lerp(self, rhs: Self, t: Self) -> Self {
+        self * (1.0 - t) + rhs * t
+    }
+
+    #[inline]
+    fn lerp_monotonic(self, rhs: Self, t: Self) -> Self {
         self + (rhs - self) * t
     }
 
@@ -27,16 +34,12 @@ impl FloatExt for f32 {
 
     #[inline]
     fn fract_gl(self) -> Self {
-        self - crate::f32::math::floor(self)
+        self - math::floor(self)
     }
 
     #[inline]
     fn step(self, value: Self) -> Self {
-        if value < self {
-            0.0
-        } else {
-            1.0
-        }
+        if value < self { 0.0 } else { 1.0 }
     }
 
     #[inline]

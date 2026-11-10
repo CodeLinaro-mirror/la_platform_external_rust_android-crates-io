@@ -1,7 +1,7 @@
 [package]
 name = "glam"
-version = "0.33.9"
-edition = "2021"
+version = "0.34.1"
+edition = "2024"
 description = "A simple and fast 3D math library for games and graphics"
 documentation = "https://docs.rs/glam"
 repository = "https://github.com/bitshifter/glam-rs"
@@ -20,7 +20,7 @@ include = [
 ]
 keywords = ["gamedev", "math", "matrix", "vector", "quaternion"]
 categories = ["game-engines", "no-std"]
-rust-version = "1.68.2"
+rust-version = "1.85.0"
 
 [badges]
 maintenance = { status = "actively-developed" }
@@ -60,18 +60,15 @@ scalar-math = []
 # align types to match CUDA requirements
 cuda = []
 
-# Deprecated and no longer has any effect. Kept so existing Cargo manifests
-# continue to build; will be removed in a future breaking release.
-fast-math = []
-
 serde = ["dep:serde_core"]
 
 # experimental nightly portable-simd support
 core-simd = ["bytemuck?/nightly_portable_simd"]
 
-bytecheck = ["rkyv/bytecheck"]
+# `rkyv`'s archive validation. Only has an effect when the `rkyv-08` feature is enabled.
+bytecheck = ["rkyv-08?/bytecheck"]
 
-zerocopy = ["dep:zerocopy", "dep:zerocopy-derive"]
+zerocopy-08 = ["dep:zerocopy-08", "dep:zerocopy-derive-08"]
 
 # enables libm and prefers it over std
 libm = ["dep:libm"]
@@ -79,39 +76,47 @@ libm = ["dep:libm"]
 # enables libm but will prefer std if available
 nostd-libm = ["dep:libm"]
 
-# `encase` is the historic, backwards-compatible name for the encase 0.12
-# integration. `encase-012`/`encase-013` select a specific encase version; both
-# may be enabled at once so downstream crates on either version keep working.
-encase = ["encase-012"]
+approx-05 = ["dep:approx-05"]
+
+mint-05 = ["dep:mint-05"]
+
+rand-010 = ["dep:rand-010"]
+
+speedy-08 = ["dep:speedy-08"]
+
 encase-012 = ["dep:encase-012"]
 encase-013 = ["dep:encase-013"]
 
+rkyv-08 = ["dep:rkyv-08"]
+
 [dependencies]
-approx = { version = "0.5", optional = true, default-features = false }
+approx-05 = { package = "approx", version = "0.5", optional = true, default-features = false }
+# `aarch64_simd` and `wasm_simd` were added in bytemuck 1.9.
 bytemuck = { version = "1.9", optional = true, default-features = false, features = ["derive", "aarch64_simd", "wasm_simd"] }
-mint = { version = "0.5.8", optional = true, default-features = false }
-rand = { version = "0.10", optional = true, default-features = false }
-serde_core = { version = "1.0", optional = true, default-features = false }
-rkyv = { version = "0.8", optional = true, default-features = false }
+mint-05 = { package = "mint", version = "0.5", optional = true, default-features = false }
+rand-010 = { package = "rand", version = "0.10", optional = true, default-features = false }
+serde_core = { version = "1", optional = true, default-features = false }
+rkyv-08 = { package = "rkyv", version = "0.8", optional = true, default-features = false }
 libm = { version = "0.2", optional = true, default-features = false }
-speedy = { version = "0.8", optional = true, default-features = false }
+speedy-08 = { package = "speedy", version = "0.8", optional = true, default-features = false }
 encase-012 = { package = "encase", version = "0.12", optional = true, default-features = false }
 encase-013 = { package = "encase", version = "0.13", optional = true, default-features = false }
-zerocopy = { version = "0.8", optional = true, default-features = false, features = ["simd"] }
-zerocopy-derive = { version = "0.8", optional = true, default-features = false }
-arbitrary = { version = "1.4.2", default-features = false, optional = true }
-float_eq = { version = "1.0.1", default-features = false, optional = true }
+zerocopy-08 = { package = "zerocopy", version = "0.8", optional = true, default-features = false, features = ["simd"] }
+zerocopy-derive-08 = { package = "zerocopy-derive", version = "0.8", optional = true, default-features = false }
+arbitrary = { version = "1", default-features = false, optional = true }
+float_eq = { version = "1", default-features = false, optional = true }
 
 [dev-dependencies]
-# rand_xoshiro is required for tests if rand is enabled
+# rand_xoshiro is required for tests if rand is enabled.
+# It tracks the `rand` version and must match the `rand-NNN` feature under test.
 rand_xoshiro = "0.8"
 # "alloc" is needed to support to_bytes()/deserialize() in tests.
-rkyv = { version = "0.8", default-features = false, features = ["alloc"] }
-serde_json = "1.0"
+rkyv-08 = { package = "rkyv", version = "0.8", default-features = false, features = ["alloc"] }
+serde_json = "1"
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
-gungraun = "0.19"
+gungraun = "0.20"
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 wasm-bindgen-test = "0.3.0"

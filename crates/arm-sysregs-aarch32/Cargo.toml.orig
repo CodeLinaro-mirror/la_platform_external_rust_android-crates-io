@@ -3,7 +3,7 @@
 
 [package]
 name = "arm-sysregs-aarch32"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Armv8-A system register helper crate for Aarch32 registers"
@@ -30,11 +30,5 @@ log = { workspace = true }
 el2 = []
 fakes = ["arm-sysregs-common/fakes"]
 
-[lints.clippy]
-missing_safety_doc = "deny"
-undocumented_unsafe_blocks = "deny"
-unreadable_literal = "deny"
-
-[lints.rust]
-missing_docs = "deny"
-unsafe_op_in_unsafe_fn = "deny"
+[lints]
+workspace = true

@@ -14,7 +14,7 @@ following lines to your `Cargo.toml` file:
 
 ```toml
 [dev-dependencies]
-rstest = "0.27.0"
+rstest = "0.28.0"
 ```
 
 ### Features
@@ -98,6 +98,35 @@ fn should_be_invalid(
 Or create a _matrix_ test by using _list of values_ for some
 variables that will generate the cartesian product of all the
 values.
+
+#### Omit case values
+
+A `#[case]` argument can declare the value to use when a case omits it:
+`#[case(default)]` uses `Default::default()`, `#[case(default(expr))]` uses
+`expr` and `#[case(opt)]` (for `Option<T>` arguments) wraps the given plain
+`T` value in `Some()` and uses `None` when it's omitted. You can omit the
+trailing values or use `_` to skip a value in the middle, while omitting the
+value of a plain `#[case]` argument is still a compile error.
+
+```rust
+use rstest::rstest;
+
+#[rstest]
+#[case("  hello  ")]
+#[case("--hello--", _, '-')]
+#[case("**bye**", "bye", '*')]
+fn trim(
+    #[case] input: &str,
+    #[case(default("hello"))] expected: &str,
+    #[case(opt)] c: Option<char>,
+) {
+    let trimmed = match c {
+        Some(c) => input.trim_matches(c),
+        None => input.trim(),
+    };
+    assert_eq!(expected, trimmed)
+}
+```
 
 #### Use Parametrize definition in more tests
 

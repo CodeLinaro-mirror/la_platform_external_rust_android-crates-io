@@ -1,0 +1,64 @@
+module(
+    name = "aom-roar",
+    version = "1.1.0",
+)
+
+# General
+bazel_dep(name = "rules_license", version = "1.0.0")
+
+# Rust, see https://github.com/bazelbuild/rules_rust
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+
+crate = use_extension("@rules_rs//rs:extensions.bzl", "crate")
+
+bazel_dep(name = "rules_rust", version = "0.68.1")
+bazel_dep(name = "rules_rs", version = "0.0.26")
+
+# Specify the Rust toolchain to use.  Bazel does not use the Cargo.toml to determine the toolchain.
+rust.toolchain(
+    edition = "2024",
+    versions = ["1.92.0"],
+)
+
+# Use Cargo.toml for Rust dependencies.
+crate.from_cargo(
+    name = "crates",
+    cargo_lock = "//:Cargo.lock",
+    cargo_toml = "//:Cargo.toml",
+    platform_triples = [
+        "aarch64-apple-darwin",  # Apple Silicon MacOS
+        "x86_64-apple-darwin",  # Apple Intel MacOS
+        "aarch64-linux-android",  # Android 64-bit
+        "armv7-linux-androideabi",  # Android ARMv7
+        "x86_64-linux-android",  # Android x86-64 (Emulator)
+        "x86_64-pc-windows-msvc",  # Windows 64-bit
+        "x86_64-unknown-linux-gnu",  # Linux
+        "wasm32-unknown-unknown",  # WebAssembly
+    ],
+)
+use_repo(crate, "crates")
+
+# C++ rules for the public C/C++ header library and ROAR-OAR equivalence testing.
+bazel_dep(name = "rules_cc", version = "0.2.17")
+
+bazel_dep(name = "abseil-cpp", version = "20260107.1", dev_dependency = True)
+bazel_dep(name = "googletest", version = "1.17.0", dev_dependency = True)
+bazel_dep(name = "google_benchmark", version = "1.9.5", dev_dependency = True)
+
+# OAR (and OBR) for equivalence testing.
+bazel_dep(name = "oar", version = "1.0.0", dev_dependency = True)
+bazel_dep(name = "obr", version = "1.0.0", dev_dependency = True)
+
+git_override(
+    module_name = "oar",
+    commit = "a7a5cc890ee088e71ff6dc13628e6e7fe74a1481",
+    remote = "https://github.com/AOMediaCodec/oar",
+)
+
+# OBR is a module OAR.
+git_override(
+    module_name = "obr",
+    commit = "a7a5cc890ee088e71ff6dc13628e6e7fe74a1481",
+    remote = "https://github.com/AOMediaCodec/oar",
+    strip_prefix = "src/renderer/obr/obr_capi/obr",
+)

@@ -1,0 +1,12 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 7a50ef6..42a8b34 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -30,6 +30,7 @@ keywords = [
+     "renderer",
+ ]
+ categories = ["multimedia::audio"]
++license = "BSD-3-Clause-Clear"
+ license-file = "LICENSE"
+ repository = "https://github.com/AOMediaCodec/roar/"
+ 

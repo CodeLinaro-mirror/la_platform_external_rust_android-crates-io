@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.88"
 name = "arm-sysregs"
-version = "0.5.1"
+version = "0.5.2"
 authors = ["Andrew Walbran <qwandor@google.com>"]
 build = false
 autolib = false
@@ -74,48 +74,48 @@ name = "log_all"
 path = "examples/log_all.rs"
 
 [dependencies.arm-sysregs-aarch32]
-version = "=0.5.1"
+version = "=0.5.2"
 
 [dependencies.arm-sysregs-common]
-version = "=0.5.1"
+version = "=0.5.2"
 
 [dependencies.arm-sysregs-el0]
-version = "=0.5.1"
+version = "=0.5.2"
 
 [dependencies.arm-sysregs-el1]
-version = "=0.5.1"
+version = "=0.5.2"
 optional = true
 
 [dependencies.arm-sysregs-el2]
-version = "=0.5.1"
+version = "=0.5.2"
 optional = true
 
 [dependencies.arm-sysregs-el3]
-version = "=0.5.1"
+version = "=0.5.2"
 optional = true
 
 [dev-dependencies.arm-sysregs-aarch32]
-version = "=0.5.1"
+version = "=0.5.2"
 features = ["fakes"]
 
 [dev-dependencies.arm-sysregs-el0]
-version = "=0.5.1"
+version = "=0.5.2"
 features = ["fakes"]
 
 [dev-dependencies.arm-sysregs-el1]
-version = "=0.5.1"
+version = "=0.5.2"
 features = ["fakes"]
 
 [dev-dependencies.arm-sysregs-el2]
-version = "=0.5.1"
+version = "=0.5.2"
 features = ["fakes"]
 
 [dev-dependencies.arm-sysregs-el3]
-version = "=0.5.1"
+version = "=0.5.2"
 features = ["fakes"]
 
 [dev-dependencies.log]
-version = "0.4.29"
+version = "0.4.34"
 
 [lints.clippy]
 missing_safety_doc = "deny"

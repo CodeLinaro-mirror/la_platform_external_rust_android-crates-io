@@ -1,4 +1,7 @@
-use syn::{parse::{Parse, ParseStream}, Ident, ItemFn, Pat, Token};
+use syn::{
+    parse::{Parse, ParseStream},
+    Ident, ItemFn, Pat, Token,
+};
 
 use self::files::{extract_files, ValueListFromFiles};
 
@@ -11,14 +14,14 @@ use super::{
     future::{extract_futures, extract_global_awt},
     ignore::extract_ignores,
     parse_vector_trailing_till_double_comma,
-    testcase::TestCase,
+    testcase::{CaseArgFallback, TestCase},
     Attribute, Attributes, ExtendWithFunctionAttrs, Fixture,
 };
+use crate::parse::rstest::test_attr::extract_test_attr;
 use crate::{error::ErrorsVec, refident::IntoPat};
 use crate::{parse::vlist::ValueList, refident::MaybePat};
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, ToTokens};
-use crate::parse::rstest::test_attr::extract_test_attr;
 
 pub(crate) mod files;
 mod test_attr;
@@ -49,25 +52,28 @@ impl Parse for RsTestInfo {
 
 impl ExtendWithFunctionAttrs for RsTestInfo {
     fn extend_with_function_attrs(&mut self, item_fn: &mut ItemFn) -> Result<(), ErrorsVec> {
-        let (composed_tuple!(
-            excluded, _timeout, futures, global_awt, by_refs, ignores, contexts, test_attr
-            // Append here new extraction
-        ), _inner) = merge_errors!(
-                merge_errors!(
-                    extract_excluded_trace(item_fn),
-                    check_timeout_attrs(item_fn),
-                    extract_futures(item_fn),
-                    extract_global_awt(item_fn),
-                    extract_by_ref(item_fn),
-                    extract_ignores(item_fn),
-                    extract_context(item_fn),
-                    extract_test_attr(item_fn),
-                    // Append here new extraction
-                ),
+        let (
+            composed_tuple!(
+                excluded, _timeout, futures, global_awt, by_refs, ignores, contexts,
+                test_attr // Append here new extraction
+            ),
+            _inner,
+        ) = merge_errors!(
+            merge_errors!(
+                extract_excluded_trace(item_fn),
+                check_timeout_attrs(item_fn),
+                extract_futures(item_fn),
+                extract_global_awt(item_fn),
+                extract_by_ref(item_fn),
+                extract_ignores(item_fn),
+                extract_context(item_fn),
+                extract_test_attr(item_fn),
+                // Append here new extraction
+            ),
             // This one should be always the last one!
             self.data.extend_with_function_attrs(item_fn)
         )?;
-        
+
         self.attributes.add_notraces(excluded);
         self.arguments.set_global_await(global_awt);
         self.arguments.set_futures(futures.into_iter());
@@ -88,8 +94,14 @@ pub(crate) struct RsTestData {
 
 impl RsTestData {
     pub(crate) fn case_args(&self) -> impl Iterator<Item = &Pat> {
+        self.case_args_with_fallback().map(|(arg, _)| arg)
+    }
+
+    pub(crate) fn case_args_with_fallback(
+        &self,
+    ) -> impl Iterator<Item = (&Pat, Option<&CaseArgFallback>)> {
         self.items.iter().filter_map(|it| match it {
-            RsTestItem::CaseArgName(ref arg) => Some(arg),
+            RsTestItem::CaseArgName(ref arg, ref fallback) => Some((arg, fallback.as_ref())),
             _ => None,
         })
     }
@@ -157,7 +169,11 @@ impl ExtendWithFunctionAttrs for RsTestData {
         )?;
 
         self.items.extend(fixtures.into_iter().map(|f| f.into()));
-        self.items.extend(case_args.into_iter().map(|f| f.into()));
+        self.items.extend(
+            case_args
+                .into_iter()
+                .map(|(arg, fallback)| RsTestItem::CaseArgName(arg, fallback)),
+        );
         self.items.extend(cases.into_iter().map(|f| f.into()));
         self.items.extend(value_list.into_iter().map(|f| f.into()));
         self.items.extend(
@@ -173,7 +189,8 @@ impl ExtendWithFunctionAttrs for RsTestData {
 #[derive(PartialEq, Debug)]
 pub(crate) enum RsTestItem {
     Fixture(Fixture),
-    CaseArgName(Pat),
+    /// A case argument and the value to use when a case omits it
+    CaseArgName(Pat, Option<CaseArgFallback>),
     TestCase(TestCase),
     ValueList(ValueList),
 }
@@ -188,7 +205,7 @@ impl MaybePat for RsTestItem {
     fn maybe_pat(&self) -> Option<&syn::Pat> {
         match self {
             RsTestItem::Fixture(f) => f.maybe_pat(),
-            RsTestItem::CaseArgName(c) => Some(c),
+            RsTestItem::CaseArgName(c, _) => Some(c),
             RsTestItem::TestCase(_) => None,
             RsTestItem::ValueList(vl) => Some(&vl.arg),
         }
@@ -203,13 +220,13 @@ impl From<Fixture> for RsTestItem {
 
 impl From<Pat> for RsTestItem {
     fn from(pat: Pat) -> Self {
-        RsTestItem::CaseArgName(pat)
+        RsTestItem::CaseArgName(pat, None)
     }
 }
 
 impl From<Ident> for RsTestItem {
     fn from(ident: Ident) -> Self {
-        RsTestItem::CaseArgName(ident.into_pat())
+        RsTestItem::CaseArgName(ident.into_pat(), None)
     }
 }
 
@@ -237,7 +254,7 @@ impl Parse for RsTestItem {
             input
                 .parse::<Ident>()
                 .map(IntoPat::into_pat)
-                .map(RsTestItem::CaseArgName)
+                .map(RsTestItem::from)
         } else {
             Err(syn::Error::new(Span::call_site(), "Cannot parse it"))
         }
@@ -249,7 +266,7 @@ impl ToTokens for RsTestItem {
         use RsTestItem::*;
         match self {
             Fixture(ref fixture) => fixture.to_tokens(tokens),
-            CaseArgName(ref case_arg) => case_arg.to_tokens(tokens),
+            CaseArgName(ref case_arg, _) => case_arg.to_tokens(tokens),
             TestCase(ref case) => case.to_tokens(tokens),
             ValueList(ref list) => list.to_tokens(tokens),
         }
@@ -391,8 +408,8 @@ mod test {
     }
 
     mod no_cases {
-        use std::collections::HashSet;
         use super::{assert_eq, *};
+        use std::collections::HashSet;
 
         #[test]
         fn happy_path() {
@@ -598,8 +615,7 @@ mod test {
 
         #[test]
         fn extract_test_attr() {
-            let mut item_fn =
-                "#[test_attr(some_valid_data)] fn f() {}".ast();
+            let mut item_fn = "#[test_attr(some_valid_data)] fn f() {}".ast();
             let expected = "fn f() {}".ast();
 
             let mut info = RsTestInfo::default();
@@ -921,6 +937,120 @@ mod test {
 
             assert_eq!(1, errors.len());
             assert_in!(errors[0].to_string(), "more than once");
+        }
+
+        #[test]
+        fn extract_case_args_fallbacks() {
+            let mut item_fn = r#"
+                    #[case(42)]
+                    fn test_fn(
+                        #[case] a: u32,
+                        #[case(opt)] b: Option<u32>,
+                        #[case(default)] mut c: u32,
+                        #[case(default(40 + 2))] mut d: u32,
+                    ) {
+                    }
+                "#
+            .ast();
+            let expected: ItemFn = r#"
+                    fn test_fn(a: u32, b: Option<u32>, mut c: u32, mut d: u32,) {
+                    }
+                "#
+            .ast();
+
+            let mut info = RsTestInfo::default();
+
+            info.extend_with_function_attrs(&mut item_fn).unwrap();
+
+            assert_eq!(expected, item_fn);
+            assert_eq!(
+                to_pats!(["a", "b", "mut c", "mut d"]),
+                info.data.case_args().cloned().collect::<Vec<_>>()
+            );
+            let fallbacks = info
+                .data
+                .case_args_with_fallback()
+                .map(|(_, fallback)| fallback.cloned())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                vec![
+                    None,
+                    Some(CaseArgFallback::Optional(ident("opt"))),
+                    Some(CaseArgFallback::Default(ident("default"))),
+                    Some(CaseArgFallback::Value(expr("40 + 2"))),
+                ],
+                fallbacks
+            );
+        }
+
+        #[test]
+        fn accept_empty_case_arg_attribute_as_plain_case() {
+            let mut item_fn = r#"
+                    #[case(42)]
+                    fn test_fn(#[case()] a: u32) {
+                    }
+                "#
+            .ast();
+
+            let mut info = RsTestInfo::default();
+
+            info.extend_with_function_attrs(&mut item_fn).unwrap();
+
+            assert_eq!(
+                vec![(&pat("a"), None)],
+                info.data.case_args_with_fallback().collect::<Vec<_>>()
+            );
+        }
+
+        #[test]
+        fn parse_infer_case_value() {
+            let mut item_fn = r#"
+                    #[case(_, 42)]
+                    fn test_fn(#[case(default)] a: u32, #[case] b: u32) {
+                    }
+                "#
+            .ast();
+
+            let mut info = RsTestInfo::default();
+
+            info.extend_with_function_attrs(&mut item_fn).unwrap();
+
+            assert_eq!(
+                vec![TestCase::from_iter(["_", "42"].iter())],
+                info.data.cases().cloned().collect::<Vec<_>>()
+            );
+        }
+
+        #[rstest]
+        #[case::unknown("#[case(foo)]", "Invalid 'foo' modifier for #[case] argument")]
+        #[case::not_ident("#[case(42)]", "Invalid #[case] argument attribute: use")]
+        #[case::brackets("#[case[opt]]", "Invalid #[case] argument attribute: use")]
+        #[case::braces("#[case{default}]", "Invalid #[case] argument attribute: use")]
+        #[case::more_args("#[case(opt, foo)]", "Invalid #[case] argument attribute: use")]
+        #[case::name_value("#[case = 42]", "Invalid #[case] argument attribute: use")]
+        #[case::default_assign("#[case(default = 42)]", "Invalid #[case] argument attribute")]
+        #[case::default_without_expression(
+            "#[case(default())]",
+            "Invalid #[case(default(...))]: expected an expression"
+        )]
+        #[case::default_with_more_expressions("#[case(default(1, 2))]", "expected just one")]
+        #[case::more_than_once("#[case(opt)] #[case(default)]", "more than once")]
+        fn should_reject_invalid_case_arg_attribute(#[case] attr: &str, #[case] message: &str) {
+            let mut item_fn = format!(
+                r#"
+                    #[case(42)]
+                    fn test_fn({attr} arg: u32) {{
+                    }}
+                "#
+            )
+            .ast();
+
+            let mut info = RsTestInfo::default();
+
+            let errors = info.extend_with_function_attrs(&mut item_fn).unwrap_err();
+
+            assert_eq!(1, errors.len());
+            assert_in!(errors[0].to_string(), message);
         }
     }
 

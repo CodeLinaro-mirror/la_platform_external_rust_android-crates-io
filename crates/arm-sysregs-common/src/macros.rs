@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright The arm-sysregs Contributors.
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+//! Common arm-sysreg macros
+
 /// Generates public functions named `read_$sysreg` and `write_$sysreg` to read or write
 /// (respectively) a value of type `$type` from/to the system register `$sysreg`.
 ///

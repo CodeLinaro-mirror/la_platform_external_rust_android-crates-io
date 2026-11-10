@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.88"
 name = "arm-sysregs-el0"
-version = "0.5.1"
+version = "0.5.2"
 authors = ["Andrew Walbran <qwandor@google.com>"]
 build = false
 autolib = false
@@ -57,30 +57,32 @@ name = "arm_sysregs_el0"
 path = "src/lib.rs"
 
 [dependencies.arm-sysregs-aarch32]
-version = "=0.5.1"
+version = "=0.5.2"
 
 [dependencies.arm-sysregs-common]
-version = "=0.5.1"
+version = "=0.5.2"
 
 [dependencies.bitflags]
-version = "2.13.1"
+version = "2.13.2"
 
 [dev-dependencies.arm-sysregs-aarch32]
-version = "=0.5.1"
+version = "=0.5.2"
 features = ["fakes"]
 
 [dev-dependencies.arm-sysregs-common]
-version = "=0.5.1"
+version = "=0.5.2"
 features = ["fakes"]
 
 [dev-dependencies.log]
-version = "0.4.29"
+version = "0.4.34"
 
 [target.'cfg(all(target_arch = "aarch64", target_os = "none"))'.dev-dependencies.aarch64-rt]
-version = "0.4.2"
+version = "0.4.3"
 default-features = false
 
 [lints.clippy]
+len_without_is_empty = "allow"
+manual_range_contains = "allow"
 missing_safety_doc = "deny"
 undocumented_unsafe_blocks = "deny"
 unreadable_literal = "deny"

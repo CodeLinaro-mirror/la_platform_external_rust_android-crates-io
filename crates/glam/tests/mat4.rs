@@ -20,6 +20,28 @@ macro_rules! impl_mat4_tests {
         ];
         const ARRAY3X3: [[$t; 3]; 3] = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]];
 
+        glam_test!(test_inverse_tiny_entries, {
+            // A subnormal determinant makes `1.0 / det` overflow to infinity; the
+            // fallible inverse reports this instead of returning inf.
+            let t: $t = $t::MIN_POSITIVE / 8.0;
+            let m = $mat4::from_diagonal($vec4::new(t, 1.0, 1.0, 1.0));
+            assert!(m.try_inverse().is_none());
+            assert_eq!(m.inverse_or_zero(), $mat4::ZERO);
+            should_glam_assert!({ m.inverse() });
+        });
+
+        glam_test!(test_inverse_cofactor_overflow, {
+            // The determinant and its reciprocal are finite, but a 3x3 minor
+            // cofactor overflows, so the resulting inverse is not finite.
+            let a: $t = $t::MAX.sqrt() * 2.0;
+            let m = $mat4::from_diagonal($vec4::new(a, a, 1.0 / a, 1.0));
+            assert!(m.determinant().is_finite());
+            assert!((1.0 / m.determinant()).is_finite());
+            assert!(m.try_inverse().is_none());
+            assert_eq!(m.inverse_or_zero(), $mat4::ZERO);
+            should_glam_assert!({ m.inverse() });
+        });
+
         glam_test!(test_const, {
             const M0: $mat4 = $mat4::from_cols(
                 $newvec4(1.0, 2.0, 3.0, 4.0),
@@ -594,6 +616,12 @@ macro_rules! impl_mat4_tests {
             // TODO: should check scale
             // should_glam_assert!({ $mat4::from_scale_rotation_translation($vec3::ZERO, $quat::IDENTITY, $vec3::ZERO) });
             should_glam_assert!({ $mat4::ZERO.to_scale_rotation_translation() });
+            // A subnormal column has zero length, so the resulting scale has a
+            // zero element even though the determinant is non-zero.
+            should_glam_assert!({
+                $mat4::from_diagonal($vec4::new($t::MIN_POSITIVE, 1.0, 1.0, 1.0))
+                    .to_scale_rotation_translation()
+            });
         });
 
         glam_test!(test_mat4_ops, {
@@ -790,7 +818,7 @@ macro_rules! impl_as_ref_tests {
 
 mod mat4 {
     use super::support::deg;
-    use glam::{mat4, swizzles::*, vec3, vec4, Mat3, Mat4, Quat, Vec3, Vec4};
+    use glam::{Mat3, Mat4, Quat, Vec3, Vec4, mat4, swizzles::*, vec3, vec4};
 
     glam_test!(test_align, {
         use std::mem;
@@ -829,6 +857,9 @@ mod mat4 {
 
         let result3 = m.transform_point3a(Vec3A::Y);
         assert_approx_eq!(Vec3A::new(1.0, 2.0, 4.5), result3, 1.0e-6);
+
+        should_glam_assert!({ Mat4::ZERO.transform_vector3a(Vec3A::X) });
+        should_glam_assert!({ Mat4::ZERO.transform_point3a(Vec3A::X) });
 
         let m = Mat4::from_cols(
             vec4(8.0, 0.0, 0.0, 0.0),
@@ -884,7 +915,7 @@ mod mat4 {
 #[cfg(feature = "f64")]
 mod dmat4 {
     use super::support::deg;
-    use glam::{dmat4, dvec3, dvec4, swizzles::*, DMat3, DMat4, DQuat, DVec3, DVec4};
+    use glam::{DMat3, DMat4, DQuat, DVec3, DVec4, dmat4, dvec3, dvec4, swizzles::*};
 
     glam_test!(test_align, {
         use std::mem;

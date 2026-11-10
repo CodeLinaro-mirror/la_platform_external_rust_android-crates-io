@@ -1,0 +1,17 @@
+name: "rmesg"
+description: "This is a fully Rust-based implementation of the popular dmesg Linux utility, giving  programmatic access to the kernel log buffer."
+third_party {
+  version: "1.0.24"
+  license_type: NOTICE
+  last_upgrade_date {
+    year: 2026
+    month: 10
+    day: 22
+  }
+  homepage: "https://crates.io/crates/rmesg"
+  identifier {
+    type: "crates.io"
+    value: "rmesg"
+    version: "1.0.24"
+  }
+}

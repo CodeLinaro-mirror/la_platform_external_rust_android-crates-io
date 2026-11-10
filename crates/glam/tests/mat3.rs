@@ -13,6 +13,28 @@ macro_rules! impl_mat3_tests {
             [13.0, 14.0, 15.0, 16.0],
         ];
 
+        glam_test!(test_inverse_tiny_entries, {
+            // A subnormal determinant makes `1.0 / det` overflow to infinity; the
+            // fallible inverse reports this instead of returning inf.
+            let t: $t = $t::MIN_POSITIVE / 8.0;
+            let m = $mat3::from_diagonal($vec3::new(t, 1.0, 1.0));
+            assert!(m.try_inverse().is_none());
+            assert_eq!(m.inverse_or_zero(), $mat3::ZERO);
+            should_glam_assert!({ m.inverse() });
+        });
+
+        glam_test!(test_inverse_cofactor_overflow, {
+            // The determinant and its reciprocal are finite, but a cofactor
+            // overflows, so the resulting inverse is not finite.
+            let a: $t = $t::MAX.sqrt() * 2.0;
+            let m = $mat3::from_diagonal($vec3::new(a, a, 1.0 / a));
+            assert!(m.determinant().is_finite());
+            assert!((1.0 / m.determinant()).is_finite());
+            assert!(m.try_inverse().is_none());
+            assert_eq!(m.inverse_or_zero(), $mat3::ZERO);
+            should_glam_assert!({ m.inverse() });
+        });
+
         glam_test!(test_const, {
             const M0: $mat3 = $mat3::from_cols(
                 $newvec3(1.0, 2.0, 3.0),
@@ -223,6 +245,8 @@ macro_rules! impl_mat3_tests {
             assert_eq!($vec2::new(0.0, 4.0), m.transform_point2($vec2::Y));
 
             should_glam_assert!({ $mat3::from_scale($vec2::ZERO) });
+            should_glam_assert!({ $mat3::ZERO.transform_point2($vec2::ZERO) });
+            should_glam_assert!({ $mat3::ZERO.transform_vector2($vec2::ZERO) });
 
             let m = $mat3::from_scale_angle_translation(
                 $vec2::new(0.5, 1.5),
@@ -530,7 +554,7 @@ macro_rules! impl_as_ref_tests {
 
 mod mat3 {
     use super::support::deg;
-    use glam::{mat3, swizzles::*, vec3, vec3a, Mat2, Mat3, Mat4, Quat, Vec2, Vec3, Vec3A};
+    use glam::{Mat2, Mat3, Mat4, Quat, Vec2, Vec3, Vec3A, mat3, swizzles::*, vec3, vec3a};
 
     glam_test!(test_align, {
         use std::mem;
@@ -563,7 +587,7 @@ mod mat3 {
 
 mod mat3a {
     use super::support::deg;
-    use glam::{mat3a, swizzles::*, vec3a, Mat2, Mat3A, Mat4, Quat, Vec2, Vec3, Vec3A};
+    use glam::{Mat2, Mat3A, Mat4, Quat, Vec2, Vec3, Vec3A, mat3a, swizzles::*, vec3a};
 
     glam_test!(test_align, {
         use std::mem;
@@ -598,7 +622,7 @@ mod mat3a {
 #[cfg(feature = "f64")]
 mod dmat3 {
     use super::support::deg;
-    use glam::{dmat3, dvec3, swizzles::*, DMat2, DMat3, DMat4, DQuat, DVec2, DVec3};
+    use glam::{DMat2, DMat3, DMat4, DQuat, DVec2, DVec3, dmat3, dvec3, swizzles::*};
 
     glam_test!(test_align, {
         use std::mem;

@@ -17,7 +17,7 @@ rust_library_host {
     name: "libopenssl_probe",
     crate_name: "openssl_probe",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.2.1",
+    cargo_pkg_version: "0.2.2",
     crate_root: "src/lib.rs",
     edition: "2021",
 }

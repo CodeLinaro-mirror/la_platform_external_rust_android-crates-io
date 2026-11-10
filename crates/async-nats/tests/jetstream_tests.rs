@@ -1521,6 +1521,173 @@ mod jetstream {
         }
     }
 
+    // Next consumer CREATE or DELETE sent by a client with the "ORDERED" inbox
+    // prefix, as (op, consumer name).
+    async fn next_ordered_request(requests: &mut async_nats::Subscriber) -> (String, String) {
+        loop {
+            let message = tokio::time::timeout(Duration::from_secs(30), requests.next())
+                .await
+                .expect("no request from the ordered consumer")
+                .unwrap();
+            if !message
+                .reply
+                .is_some_and(|reply| reply.starts_with("ORDERED."))
+            {
+                continue;
+            }
+            let tokens: Vec<&str> = message.subject.split('.').collect();
+            if matches!(tokens[3], "CREATE" | "DELETE") {
+                return (tokens[3].into(), tokens.get(5).unwrap_or(&"").to_string());
+            }
+        }
+    }
+
+    // On recreate, an ordered pull consumer deletes the consumer it replaces and
+    // creates `{name}_{serial}` instead, like nats.go.
+    #[tokio::test]
+    async fn pull_ordered_recreate_deletes_previous_consumer() {
+        let server = nats_server::run_server("tests/configs/jetstream.conf");
+        let client = ConnectOptions::new()
+            .custom_inbox_prefix("ORDERED")
+            .connect(server.client_url())
+            .await
+            .unwrap();
+        let context = async_nats::jetstream::new(client);
+
+        let admin = async_nats::connect(server.client_url()).await.unwrap();
+        let admin_context = async_nats::jetstream::new(admin.clone());
+        let mut requests = admin.subscribe("$JS.API.CONSUMER.>").await.unwrap();
+        admin.flush().await.unwrap();
+        let stream = admin_context
+            .create_stream(stream::Config {
+                name: "events".to_string(),
+                subjects: vec!["events".to_string()],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        for name in [None, Some("ordered".to_string())] {
+            let consumer = context
+                .get_stream("events")
+                .await
+                .unwrap()
+                .create_consumer(pull::OrderedConfig {
+                    name,
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(next_ordered_request(&mut requests).await.0, "CREATE");
+            let base = consumer.cached_info().name.clone();
+            let mut messages = consumer.messages().await.unwrap();
+            let task = tokio::spawn(async move { while messages.next().await.is_some() {} });
+
+            let mut current = base.clone();
+            for serial in 1..=2 {
+                // Wait for a pending pull, so the delete below reaches the client.
+                tokio::time::timeout(Duration::from_secs(10), async {
+                    while stream
+                        .consumer_info(&current)
+                        .await
+                        .map(|info| info.num_waiting)
+                        .ok()
+                        != Some(1)
+                    {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
+                })
+                .await
+                .expect("no pull request pending");
+
+                admin_context
+                    .delete_consumer_from_stream(&current, "events")
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    next_ordered_request(&mut requests).await,
+                    ("DELETE".to_string(), current.clone())
+                );
+                current = format!("{base}_{serial}");
+                assert_eq!(
+                    next_ordered_request(&mut requests).await,
+                    ("CREATE".to_string(), current.clone())
+                );
+            }
+            task.abort();
+        }
+    }
+
+    // Same as `pull_ordered_recreate_deletes_previous_consumer`, for the push consumer.
+    // Each recreate waits for missed heartbeats, so this takes about 40 seconds.
+    #[tokio::test]
+    async fn push_ordered_recreate_deletes_previous_consumer() {
+        let server = nats_server::run_server("tests/configs/jetstream.conf");
+        let client = ConnectOptions::new()
+            .custom_inbox_prefix("ORDERED")
+            .connect(server.client_url())
+            .await
+            .unwrap();
+        let context = async_nats::jetstream::new(client);
+
+        let admin = async_nats::connect(server.client_url()).await.unwrap();
+        let admin_context = async_nats::jetstream::new(admin.clone());
+        let mut requests = admin.subscribe("$JS.API.CONSUMER.>").await.unwrap();
+        admin.flush().await.unwrap();
+        let stream = admin_context
+            .create_stream(stream::Config {
+                name: "events".to_string(),
+                subjects: vec!["events".to_string()],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        for name in [None, Some("ordered".to_string())] {
+            let consumer = context
+                .get_stream("events")
+                .await
+                .unwrap()
+                .create_consumer(push::OrderedConfig {
+                    deliver_subject: "deliver".to_string(),
+                    name,
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(next_ordered_request(&mut requests).await.0, "CREATE");
+            let base = consumer.cached_info().name.clone();
+            let mut messages = consumer.messages().await.unwrap();
+            let task = tokio::spawn(async move { while messages.next().await.is_some() {} });
+
+            let mut current = base.clone();
+            for serial in 1..=2 {
+                tokio::time::timeout(Duration::from_secs(10), async {
+                    while stream.consumer_info(&current).await.is_err() {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
+                })
+                .await
+                .expect("consumer not created");
+
+                admin_context
+                    .delete_consumer_from_stream(&current, "events")
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    next_ordered_request(&mut requests).await,
+                    ("DELETE".to_string(), current.clone())
+                );
+                current = format!("{base}_{serial}");
+                assert_eq!(
+                    next_ordered_request(&mut requests).await,
+                    ("CREATE".to_string(), current.clone())
+                );
+            }
+            task.abort();
+        }
+    }
+
     #[tokio::test]
     async fn push_ordered_recreate() {
         let mut server =
@@ -1878,6 +2045,51 @@ mod jetstream {
     }
 
     #[tokio::test]
+    async fn push_stream_buffered_messages_survive_idle() {
+        let server = nats_server::run_server("tests/configs/jetstream.conf");
+        let client = async_nats::connect(server.client_url()).await.unwrap();
+        let context = async_nats::jetstream::new(client);
+        let stream = context
+            .create_stream(stream::Config {
+                name: "events".into(),
+                subjects: vec!["events".into()],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        stream
+            .create_consumer(consumer::push::Config {
+                deliver_subject: "push".into(),
+                durable_name: Some("push".into()),
+                idle_heartbeat: Duration::from_millis(100),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let consumer: PushConsumer = stream.get_consumer("push").await.unwrap();
+        let mut messages = consumer.messages().await.unwrap();
+        // Empty channel -> Pending, starts the 2x idle_heartbeat timer.
+        assert!(futures_util::FutureExt::now_or_never(messages.next()).is_none());
+        for _ in 0..10 {
+            context
+                .publish("events", "dat".into())
+                .await
+                .unwrap()
+                .await
+                .unwrap();
+        }
+        // Stream not polled past the timer deadline while messages are buffered.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        for _ in 0..10 {
+            let message = messages.next().await.unwrap();
+            assert!(
+                message.is_ok(),
+                "buffered message expected, got {message:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn push_stream_heartbeat() {
         let server = nats_server::run_server("tests/configs/jetstream.conf");
         let client = async_nats::connect(server.client_url()).await.unwrap();
@@ -2042,6 +2254,54 @@ mod jetstream {
             .take(100);
         while let Some(result) = iter.next().await {
             result.unwrap().ack().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn pull_stream_buffered_messages_survive_idle() {
+        let server = nats_server::run_server("tests/configs/jetstream.conf");
+        let client = async_nats::connect(server.client_url()).await.unwrap();
+        let context = async_nats::jetstream::new(client);
+        let stream = context
+            .create_stream(stream::Config {
+                name: "events".into(),
+                subjects: vec!["events".into()],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let consumer: PullConsumer = stream
+            .create_consumer(consumer::pull::Config {
+                durable_name: Some("pull".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let mut messages = consumer
+            .stream()
+            .heartbeat(Duration::from_millis(100))
+            .expires(Duration::from_secs(5))
+            .messages()
+            .await
+            .unwrap();
+        // Empty channel -> Pending, starts the 2x idle_heartbeat timer.
+        assert!(futures_util::FutureExt::now_or_never(messages.next()).is_none());
+        for _ in 0..10 {
+            context
+                .publish("events", "dat".into())
+                .await
+                .unwrap()
+                .await
+                .unwrap();
+        }
+        // Stream not polled past the timer deadline while messages are buffered.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        for _ in 0..10 {
+            let message = messages.next().await.unwrap();
+            assert!(
+                message.is_ok(),
+                "buffered message expected, got {message:?}"
+            );
         }
     }
 
@@ -3314,10 +3574,12 @@ mod jetstream {
             .await
             .unwrap();
 
+        // Durable, so the server does not remove consumers created early for inactivity while the
+        // rest are still being created.
         for i in 0..235 {
             stream
                 .create_consumer(async_nats::jetstream::consumer::pull::Config {
-                    name: Some(format!("consumer_{i}")),
+                    durable_name: Some(format!("consumer_{i}")),
                     ..Default::default()
                 })
                 .await
@@ -3350,6 +3612,8 @@ mod jetstream {
             .create_stream(async_nats::jetstream::stream::Config {
                 name: "TEST".into(),
                 subjects: vec!["test".into()],
+                // Server 2.15+ defaults to 1000 consumers per stream; `-1` does not opt out.
+                max_consumers: 1200,
                 ..Default::default()
             })
             .await
@@ -4366,6 +4630,39 @@ mod jetstream {
 
     #[cfg(feature = "server_2_11")]
     #[tokio::test]
+    async fn consumer_priority_timeout() {
+        let server = nats_server::run_server("tests/configs/jetstream.conf");
+        let client = async_nats::connect(server.client_url()).await.unwrap();
+        let jetstream = async_nats::jetstream::new(client);
+
+        let stream = jetstream
+            .create_stream(stream::Config {
+                name: "events".to_string(),
+                subjects: vec!["events.>".to_string()],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let mut consumer = stream
+            .create_consumer(pull::Config {
+                durable_name: Some("name".to_string()),
+                priority_policy: PriorityPolicy::PinnedClient,
+                priority_groups: vec!["A".to_string()],
+                priority_timeout: Duration::from_secs(1),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            consumer.info().await.unwrap().config.priority_timeout,
+            Duration::from_secs(1)
+        );
+    }
+
+    #[cfg(feature = "server_2_11")]
+    #[tokio::test]
     async fn pause_consumer() {
         let server = nats_server::run_server("tests/configs/jetstream.conf");
         let client = async_nats::ConnectOptions::new()
@@ -4858,6 +5155,73 @@ mod jetstream {
         tokio::time::timeout(Duration::from_secs(1), high.next())
             .await
             .unwrap();
+    }
+
+    #[cfg(feature = "server_2_12")]
+    #[tokio::test]
+    async fn prioritized_fetch() {
+        let server = nats_server::run_server("tests/configs/jetstream.conf");
+        let client = async_nats::connect(server.client_url()).await.unwrap();
+        let context = async_nats::jetstream::new(client.clone());
+
+        let stream = context
+            .create_stream(async_nats::jetstream::stream::Config {
+                name: "source".into(),
+                subjects: vec!["test".into()],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let consumer = stream
+            .create_consumer(async_nats::jetstream::consumer::pull::Config {
+                durable_name: Some("consumer".into()),
+                priority_policy: PriorityPolicy::Prioritized,
+                priority_groups: vec!["A".into()],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        for i in 0..10 {
+            context
+                .publish("test", format!("{i}").into())
+                .await
+                .unwrap()
+                .await
+                .unwrap();
+        }
+
+        let mut requests = client
+            .subscribe("$JS.API.CONSUMER.MSG.NEXT.source.consumer")
+            .await
+            .unwrap();
+
+        let mut messages = consumer
+            .fetch()
+            .max_messages(10)
+            .expires(tokio::time::Duration::from_secs(5))
+            .group("A")
+            .priority(5)
+            .messages()
+            .await
+            .unwrap();
+
+        // The pull request must carry the priority and leave the batch size untouched.
+        let request = tokio::time::timeout(Duration::from_secs(5), requests.next())
+            .await
+            .unwrap()
+            .unwrap();
+        let request: serde_json::Value = serde_json::from_slice(&request.payload).unwrap();
+        assert_eq!(request["batch"], 10);
+        assert_eq!(request["priority"], 5);
+
+        let mut count = 0;
+        while let Some(message) = messages.next().await {
+            message.unwrap().ack().await.unwrap();
+            count += 1;
+        }
+        assert_eq!(count, 10);
     }
 
     #[tokio::test]

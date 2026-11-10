@@ -2,7 +2,7 @@
 
 use core::hint::black_box;
 use gungraun::{
-    library_benchmark, library_benchmark_group, main, Callgrind, LibraryBenchmarkConfig,
+    Callgrind, LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main,
 };
 
 use glam::{
@@ -37,6 +37,26 @@ fn mat3a() -> Mat3A {
     black_box(Mat3A::from_cols_array(&[
         1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0,
     ]))
+}
+
+// A non-singular 2D affine transform (SRT) for the `transform_point2` and
+// `transform_vector2` benchmarks.
+#[inline]
+fn mat3_srt() -> Mat3 {
+    black_box(Mat3::from_scale_angle_translation(
+        Vec2::new(2.0, 3.0),
+        1.0,
+        Vec2::new(1.0, 2.0),
+    ))
+}
+
+#[inline]
+fn mat3a_srt() -> Mat3A {
+    black_box(Mat3A::from_scale_angle_translation(
+        Vec2::new(2.0, 3.0),
+        1.0,
+        Vec2::new(1.0, 2.0),
+    ))
 }
 
 #[inline]
@@ -266,6 +286,18 @@ fn mat3_mul_transpose_vec3(m: Mat3, v: Vec3) -> Vec3 {
 }
 
 #[library_benchmark]
+#[bench::args(mat3_srt(), vec2())]
+fn mat3_transform_point2(m: Mat3, v: Vec2) -> Vec2 {
+    black_box(m.transform_point2(v))
+}
+
+#[library_benchmark]
+#[bench::args(mat3_srt(), vec2())]
+fn mat3_transform_vector2(m: Mat3, v: Vec2) -> Vec2 {
+    black_box(m.transform_vector2(v))
+}
+
+#[library_benchmark]
 #[bench::args(mat3a())]
 fn mat3a_determinant(m: Mat3A) -> f32 {
     black_box(m.determinant())
@@ -313,6 +345,18 @@ fn mat3a_mul_vec3a(m: Mat3A, v: Vec3A) -> Vec3A {
 #[bench::args(mat3a(), vec3a())]
 fn mat3a_mul_transpose_vec3a(m: Mat3A, v: Vec3A) -> Vec3A {
     black_box(m.mul_transpose_vec3a(v))
+}
+
+#[library_benchmark]
+#[bench::args(mat3a_srt(), vec2())]
+fn mat3a_transform_point2(m: Mat3A, v: Vec2) -> Vec2 {
+    black_box(m.transform_point2(v))
+}
+
+#[library_benchmark]
+#[bench::args(mat3a_srt(), vec2())]
+fn mat3a_transform_vector2(m: Mat3A, v: Vec2) -> Vec2 {
+    black_box(m.transform_vector2(v))
 }
 
 #[library_benchmark]
@@ -501,6 +545,12 @@ fn vec3a_lerp(v1: Vec3A, v2: Vec3A, t: f32) -> Vec3A {
 }
 
 #[library_benchmark]
+#[bench::args(vec3a(), vec3a(), bb_f32())]
+fn vec3a_lerp_monotonic(v1: Vec3A, v2: Vec3A, t: f32) -> Vec3A {
+    black_box(v1.lerp_monotonic(v2, t))
+}
+
+#[library_benchmark]
 #[bench::nonzero(vec3a())]
 #[bench::zero(black_box(Vec3A::ZERO))]
 fn vec3a_normalize_or_zero(v: Vec3A) -> Vec3A {
@@ -657,6 +707,8 @@ library_benchmark_group!(
         mat3_mul_mat3,
         mat3_mul_vec3,
         mat3_mul_transpose_vec3,
+        mat3_transform_point2,
+        mat3_transform_vector2,
         mat3_transpose,
         mat3_try_inverse,
 );
@@ -671,6 +723,8 @@ library_benchmark_group!(
         mat3a_mul_mat3a,
         mat3a_mul_vec3a,
         mat3a_mul_transpose_vec3a,
+        mat3a_transform_point2,
+        mat3a_transform_vector2,
         mat3a_transpose,
         mat3a_try_inverse,
 );
@@ -715,6 +769,7 @@ library_benchmark_group!(
         vec3a_cross,
         vec3a_length,
         vec3a_lerp,
+        vec3a_lerp_monotonic,
         vec3a_normalize,
         vec3a_normalize_or_zero,
         vec3a_slerp,

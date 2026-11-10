@@ -1,17 +1,17 @@
 // Generated from mat.rs.tera template. Edit the template, not the generated file.
 
 use crate::{
+    DMat3, DQuat, DVec3, DVec4, EulerRot, Mat4,
     euler::{FromEuler, ToEuler},
     f64::math,
     swizzles::*,
-    DMat3, DQuat, DVec3, DVec4, EulerRot, Mat4,
 };
 use core::fmt;
 use core::iter::{Product, Sum};
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-#[cfg(feature = "zerocopy")]
-use zerocopy_derive::*;
+#[cfg(feature = "zerocopy-08")]
+use zerocopy_derive_08::*;
 
 /// Creates a 4x4 matrix from four column vectors.
 #[inline(always)]
@@ -38,7 +38,7 @@ pub const fn dmat4(x_axis: DVec4, y_axis: DVec4, z_axis: DVec4, w_axis: DVec4) -
 #[derive(Clone, Copy)]
 #[cfg_attr(feature = "bytemuck", derive(bytemuck::Pod, bytemuck::Zeroable))]
 #[cfg_attr(
-    feature = "zerocopy",
+    feature = "zerocopy-08",
     derive(FromBytes, Immutable, IntoBytes, KnownLayout)
 )]
 #[cfg_attr(feature = "cuda", repr(align(16)))]
@@ -228,6 +228,7 @@ impl DMat4 {
 
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     fn quat_to_axes(rotation: DQuat) -> (DVec4, DVec4, DVec4) {
         glam_assert!(rotation.is_normalized());
 
@@ -262,6 +263,7 @@ impl DMat4 {
     /// Will panic if `rotation` is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn from_scale_rotation_translation(
         scale: DVec3,
         rotation: DQuat,
@@ -286,6 +288,7 @@ impl DMat4 {
     /// Will panic if `rotation` is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn from_rotation_translation(rotation: DQuat, translation: DVec3) -> Self {
         let (x_axis, y_axis, z_axis) = Self::quat_to_axes(rotation);
         Self::from_cols(x_axis, y_axis, z_axis, DVec4::from((translation, 1.0)))
@@ -300,6 +303,7 @@ impl DMat4 {
     /// is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn to_scale_rotation_translation(&self) -> (DVec3, DQuat, DVec3) {
         glam_assert!(self.row(3).abs_diff_eq(DVec4::W, 1e-6));
 
@@ -310,7 +314,7 @@ impl DMat4 {
         glam_assert!(det != 0.0);
 
         let scale = DVec3::new(
-            r.x_axis.length() * math::signum(det),
+            r.x_axis.length() * det.signum(),
             r.y_axis.length(),
             r.z_axis.length(),
         );
@@ -340,6 +344,7 @@ impl DMat4 {
     /// Will panic if `rotation` is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn from_quat(rotation: DQuat) -> Self {
         let (x_axis, y_axis, z_axis) = Self::quat_to_axes(rotation);
         Self::from_cols(x_axis, y_axis, z_axis, DVec4::W)
@@ -402,6 +407,7 @@ impl DMat4 {
     /// Will panic if `axis` is not normalized when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn from_axis_angle(axis: DVec3, angle: f64) -> Self {
         glam_assert!(axis.is_normalized());
 
@@ -457,13 +463,14 @@ impl DMat4 {
     /// `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn to_euler(&self, order: EulerRot) -> (f64, f64, f64) {
         glam_assert!(
             self.x_axis.xyz().is_normalized()
                 && self.y_axis.xyz().is_normalized()
                 && self.z_axis.xyz().is_normalized()
         );
-        self.to_euler_angles(order)
+        DMat3::from_mat4(*self).to_euler_angles(order)
     }
 
     /// Creates an affine transformation matrix containing a 3D rotation around the x axis of
@@ -527,6 +534,7 @@ impl DMat4 {
     /// Will panic if all elements of `scale` are zero when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn from_scale(scale: DVec3) -> Self {
         // Do not panic as long as any component is non-zero
         glam_assert!(scale.cmpne(DVec3::ZERO).any());
@@ -548,6 +556,7 @@ impl DMat4 {
     /// Panics if `slice` is less than 16 elements long.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub const fn from_cols_slice(slice: &[f64]) -> Self {
         Self::new(
             slice[0], slice[1], slice[2], slice[3], slice[4], slice[5], slice[6], slice[7],
@@ -561,6 +570,7 @@ impl DMat4 {
     ///
     /// Panics if `slice` is less than 16 elements long.
     #[inline]
+    #[track_caller]
     pub fn write_cols_to_slice(&self, slice: &mut [f64]) {
         slice[0] = self.x_axis.x;
         slice[1] = self.x_axis.y;
@@ -592,6 +602,7 @@ impl DMat4 {
     /// Panics if `slice` is less than 16 elements long.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub const fn from_rows_slice(slice: &[f64]) -> Self {
         Self::new(
             slice[0], slice[4], slice[8], slice[12], slice[1], slice[5], slice[9], slice[13],
@@ -606,6 +617,7 @@ impl DMat4 {
     /// Panics if `index` is greater than 3.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub fn col(&self, index: usize) -> DVec4 {
         match index {
             0 => self.x_axis,
@@ -622,6 +634,7 @@ impl DMat4 {
     ///
     /// Panics if `index` is greater than 3.
     #[inline]
+    #[track_caller]
     pub fn col_mut(&mut self, index: usize) -> &mut DVec4 {
         match index {
             0 => &mut self.x_axis,
@@ -641,6 +654,7 @@ impl DMat4 {
     /// Panics if `index` is greater than 3.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub fn row(&self, index: usize) -> DVec4 {
         match index {
             0 => DVec4::new(self.x_axis.x, self.y_axis.x, self.z_axis.x, self.w_axis.x),
@@ -661,6 +675,7 @@ impl DMat4 {
     ///
     /// Panics if `index` is greater than 3.
     #[inline]
+    #[track_caller]
     pub fn set_row(&mut self, index: usize, row: DVec4) {
         match index {
             0 => {
@@ -754,14 +769,15 @@ impl DMat4 {
     /// inverted matrix and true is returned.
     ///
     /// If `CHECKED` is false then the determinant is not checked and if it is zero the resulting
-    /// inverted matrix will be invalid. Will panic if the determinant of `self` is zero when
-    /// `glam_assert` is enabled.
+    /// inverted matrix will be invalid. Will panic if the resulting inverted matrix is not finite
+    /// when `glam_assert` is enabled.
     ///
     /// A tuple containing the inverted matrix and a bool is used instead of an option here as
     /// regular Rust enums put the discriminant first which can result in a lot of padding if the
     /// matrix is aligned.
     #[inline(always)]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     fn inverse_checked<const CHECKED: bool>(&self) -> (Self, bool) {
         let (m00, m01, m02, m03) = self.x_axis.into();
         let (m10, m11, m12, m13) = self.y_axis.into();
@@ -828,540 +844,49 @@ impl DMat4 {
 
         let dot0 = self.x_axis.mul(col0);
         let dot1 = dot0.x + dot0.y + dot0.z + dot0.w;
+        let m = inverse.mul(1.0 / dot1);
 
         if CHECKED {
-            if dot1 == 0.0 {
+            if !m.is_finite() {
                 return (Self::ZERO, false);
             }
         } else {
-            glam_assert!(dot1 != 0.0);
+            glam_assert!(m.is_finite());
         }
 
-        let rcp_det = 1.0 / dot1;
-        (inverse.mul(rcp_det), true)
+        (m, true)
     }
 
     /// Returns the inverse of `self`.
     ///
-    /// If the matrix is not invertible the returned matrix will be invalid.
+    /// If the matrix is not invertible the returned matrix will be invalid. The
+    /// returned matrix will also be invalid if the inverse is not finite, which can
+    /// happen when `self` contains very large or very small values. Use
+    /// [`Self::try_inverse`] or [`Self::inverse_or_zero`] to detect these cases.
     ///
     /// # Panics
     ///
-    /// Will panic if the determinant of `self` is zero when `glam_assert` is enabled.
+    /// Will panic if the resulting inverted matrix is not finite when `glam_assert`
+    /// is enabled.
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn inverse(&self) -> Self {
         self.inverse_checked::<false>().0
     }
 
-    /// Returns the inverse of `self` or `None` if the matrix is not invertible.
+    /// Returns the inverse of `self` or `None` if the matrix is not invertible, or if
+    /// the inverse is not finite.
     #[must_use]
     pub fn try_inverse(&self) -> Option<Self> {
         let (m, is_valid) = self.inverse_checked::<true>();
-        if is_valid {
-            Some(m)
-        } else {
-            None
-        }
+        if is_valid { Some(m) } else { None }
     }
 
-    /// Returns the inverse of `self` or `DMat4::ZERO` if the matrix is not invertible.
+    /// Returns the inverse of `self` or `DMat4::ZERO` if the matrix is not
+    /// invertible, or if the inverse is not finite.
     #[must_use]
     pub fn inverse_or_zero(&self) -> Self {
         self.inverse_checked::<true>().0
-    }
-
-    /// Creates a left-handed view matrix using a camera position, a facing direction and an up
-    /// direction
-    ///
-    /// For a view coordinate system with `+X=right`, `+Y=up` and `+Z=forward`.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `dir` or `up` are not normalized when `glam_assert` is enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::lh::view::look_to_mat4` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn look_to_lh(eye: DVec3, dir: DVec3, up: DVec3) -> Self {
-        #[allow(deprecated)]
-        Self::look_to_rh(eye, -dir, up)
-    }
-
-    /// Creates a right-handed view matrix using a camera position, a facing direction, and an up
-    /// direction.
-    ///
-    /// For a view coordinate system with `+X=right`, `+Y=up` and `+Z=back`.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `dir` or `up` are not normalized when `glam_assert` is enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::rh::view::look_to_mat4` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn look_to_rh(eye: DVec3, dir: DVec3, up: DVec3) -> Self {
-        glam_assert!(dir.is_normalized());
-        glam_assert!(up.is_normalized());
-        let f = dir;
-        let s = f.cross(up).normalize();
-        let u = s.cross(f);
-
-        Self::from_cols(
-            DVec4::new(s.x, u.x, -f.x, 0.0),
-            DVec4::new(s.y, u.y, -f.y, 0.0),
-            DVec4::new(s.z, u.z, -f.z, 0.0),
-            DVec4::new(-eye.dot(s), -eye.dot(u), eye.dot(f), 1.0),
-        )
-    }
-
-    /// Creates a left-handed view matrix using a camera position, a focal points and an up
-    /// direction.
-    ///
-    /// For a view coordinate system with `+X=right`, `+Y=up` and `+Z=forward`.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `up` is not normalized when `glam_assert` is enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::lh::view::look_at_mat4` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn look_at_lh(eye: DVec3, center: DVec3, up: DVec3) -> Self {
-        #[allow(deprecated)]
-        Self::look_to_lh(eye, center.sub(eye).normalize(), up)
-    }
-
-    /// Creates a right-handed view matrix using a camera position, a focal point, and an up
-    /// direction.
-    ///
-    /// For a view coordinate system with `+X=right`, `+Y=up` and `+Z=back`.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `up` is not normalized when `glam_assert` is enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::rh::view::look_at_mat4` function instead"
-    )]
-    #[inline]
-    pub fn look_at_rh(eye: DVec3, center: DVec3, up: DVec3) -> Self {
-        #[allow(deprecated)]
-        Self::look_to_rh(eye, center.sub(eye).normalize(), up)
-    }
-
-    /// Creates a right-handed perspective projection matrix with [-1,1] depth range.
-    ///
-    /// This is the same as the OpenGL `glFrustum` function.
-    ///
-    /// See <https://registry.khronos.org/OpenGL-Refpages/gl2.1/xhtml/glFrustum.xml>
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::rh::proj::opengl::frustum` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn frustum_rh_gl(
-        left: f64,
-        right: f64,
-        bottom: f64,
-        top: f64,
-        z_near: f64,
-        z_far: f64,
-    ) -> Self {
-        let inv_width = 1.0 / (right - left);
-        let inv_height = 1.0 / (top - bottom);
-        let inv_depth = 1.0 / (z_far - z_near);
-        let a = (right + left) * inv_width;
-        let b = (top + bottom) * inv_height;
-        let c = -(z_far + z_near) * inv_depth;
-        let d = -(2.0 * z_far * z_near) * inv_depth;
-        let two_z_near = 2.0 * z_near;
-        Self::from_cols(
-            DVec4::new(two_z_near * inv_width, 0.0, 0.0, 0.0),
-            DVec4::new(0.0, two_z_near * inv_height, 0.0, 0.0),
-            DVec4::new(a, b, c, -1.0),
-            DVec4::new(0.0, 0.0, d, 0.0),
-        )
-    }
-
-    /// Creates a left-handed perspective projection matrix with `[0,1]` depth range.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `z_near` or `z_far` are less than or equal to zero when `glam_assert` is
-    /// enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::lh::proj::directx::frustum` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn frustum_lh(
-        left: f64,
-        right: f64,
-        bottom: f64,
-        top: f64,
-        z_near: f64,
-        z_far: f64,
-    ) -> Self {
-        glam_assert!(z_near > 0.0 && z_far > 0.0);
-        let inv_width = 1.0 / (right - left);
-        let inv_height = 1.0 / (top - bottom);
-        let inv_depth = 1.0 / (z_far - z_near);
-        let a = (right + left) * inv_width;
-        let b = (top + bottom) * inv_height;
-        let c = z_far * inv_depth;
-        let d = -(z_far * z_near) * inv_depth;
-        let two_z_near = 2.0 * z_near;
-        Self::from_cols(
-            DVec4::new(two_z_near * inv_width, 0.0, 0.0, 0.0),
-            DVec4::new(0.0, two_z_near * inv_height, 0.0, 0.0),
-            DVec4::new(a, b, c, 1.0),
-            DVec4::new(0.0, 0.0, d, 0.0),
-        )
-    }
-
-    /// Creates a right-handed perspective projection matrix with `[0,1]` depth range.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `z_near` or `z_far` are less than or equal to zero when `glam_assert` is
-    /// enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::rh::proj::directx::frustum` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn frustum_rh(
-        left: f64,
-        right: f64,
-        bottom: f64,
-        top: f64,
-        z_near: f64,
-        z_far: f64,
-    ) -> Self {
-        glam_assert!(z_near > 0.0 && z_far > 0.0);
-        let inv_width = 1.0 / (right - left);
-        let inv_height = 1.0 / (top - bottom);
-        let inv_depth = 1.0 / (z_far - z_near);
-        let a = (right + left) * inv_width;
-        let b = (top + bottom) * inv_height;
-        let c = -z_far * inv_depth;
-        let d = -(z_far * z_near) * inv_depth;
-        let two_z_near = 2.0 * z_near;
-        Self::from_cols(
-            DVec4::new(two_z_near * inv_width, 0.0, 0.0, 0.0),
-            DVec4::new(0.0, two_z_near * inv_height, 0.0, 0.0),
-            DVec4::new(a, b, c, -1.0),
-            DVec4::new(0.0, 0.0, d, 0.0),
-        )
-    }
-
-    /// Creates a right-handed perspective projection matrix with `[-1,1]` depth range.
-    ///
-    /// Useful to map the standard right-handed coordinate system into what OpenGL expects.
-    ///
-    /// This is the same as the OpenGL `gluPerspective` function.
-    /// See <https://www.khronos.org/registry/OpenGL-Refpages/gl2.1/xhtml/gluPerspective.xml>
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::rh::proj::opengl::perspective` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn perspective_rh_gl(
-        fov_y_radians: f64,
-        aspect_ratio: f64,
-        z_near: f64,
-        z_far: f64,
-    ) -> Self {
-        let inv_length = 1.0 / (z_near - z_far);
-        let f = 1.0 / math::tan(0.5 * fov_y_radians);
-        let a = f / aspect_ratio;
-        let b = (z_near + z_far) * inv_length;
-        let c = (2.0 * z_near * z_far) * inv_length;
-        Self::from_cols(
-            DVec4::new(a, 0.0, 0.0, 0.0),
-            DVec4::new(0.0, f, 0.0, 0.0),
-            DVec4::new(0.0, 0.0, b, -1.0),
-            DVec4::new(0.0, 0.0, c, 0.0),
-        )
-    }
-
-    /// Creates a left-handed perspective projection matrix with `[0,1]` depth range.
-    ///
-    /// Useful to map the standard left-handed coordinate system into what WebGPU/Metal/Direct3D expect.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `z_near` or `z_far` are less than or equal to zero when `glam_assert` is
-    /// enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::lh::proj::directx::perspective` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn perspective_lh(fov_y_radians: f64, aspect_ratio: f64, z_near: f64, z_far: f64) -> Self {
-        glam_assert!(z_near > 0.0 && z_far > 0.0);
-        let (sin_fov, cos_fov) = math::sin_cos(0.5 * fov_y_radians);
-        let h = cos_fov / sin_fov;
-        let w = h / aspect_ratio;
-        let r = z_far / (z_far - z_near);
-        Self::from_cols(
-            DVec4::new(w, 0.0, 0.0, 0.0),
-            DVec4::new(0.0, h, 0.0, 0.0),
-            DVec4::new(0.0, 0.0, r, 1.0),
-            DVec4::new(0.0, 0.0, -r * z_near, 0.0),
-        )
-    }
-
-    /// Creates a right-handed perspective projection matrix with `[0,1]` depth range.
-    ///
-    /// Useful to map the standard right-handed coordinate system into what WebGPU/Metal/Direct3D expect.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `z_near` or `z_far` are less than or equal to zero when `glam_assert` is
-    /// enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::rh::proj::directx::perspective` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn perspective_rh(fov_y_radians: f64, aspect_ratio: f64, z_near: f64, z_far: f64) -> Self {
-        glam_assert!(z_near > 0.0 && z_far > 0.0);
-        let (sin_fov, cos_fov) = math::sin_cos(0.5 * fov_y_radians);
-        let h = cos_fov / sin_fov;
-        let w = h / aspect_ratio;
-        let r = z_far / (z_near - z_far);
-        Self::from_cols(
-            DVec4::new(w, 0.0, 0.0, 0.0),
-            DVec4::new(0.0, h, 0.0, 0.0),
-            DVec4::new(0.0, 0.0, r, -1.0),
-            DVec4::new(0.0, 0.0, r * z_near, 0.0),
-        )
-    }
-
-    /// Creates an infinite left-handed perspective projection matrix with `[0,1]` depth range.
-    ///
-    /// Like `perspective_lh`, but with an infinite value for `z_far`.
-    /// The result is that points near `z_near` are mapped to depth `0`, and as they move towards infinity the depth approaches `1`.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `z_near` or `z_far` are less than or equal to zero when `glam_assert` is
-    /// enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::lh::proj::directx::perspective_infinite` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn perspective_infinite_lh(fov_y_radians: f64, aspect_ratio: f64, z_near: f64) -> Self {
-        glam_assert!(z_near > 0.0);
-        let (sin_fov, cos_fov) = math::sin_cos(0.5 * fov_y_radians);
-        let h = cos_fov / sin_fov;
-        let w = h / aspect_ratio;
-        Self::from_cols(
-            DVec4::new(w, 0.0, 0.0, 0.0),
-            DVec4::new(0.0, h, 0.0, 0.0),
-            DVec4::new(0.0, 0.0, 1.0, 1.0),
-            DVec4::new(0.0, 0.0, -z_near, 0.0),
-        )
-    }
-
-    /// Creates an infinite reverse left-handed perspective projection matrix with `[0,1]` depth range.
-    ///
-    /// Similar to `perspective_infinite_lh`, but maps `Z = z_near` to a depth of `1` and `Z = infinity` to a depth of `0`.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `z_near` is less than or equal to zero when `glam_assert` is enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::lh::proj::directx::perspective_infinite_reverse` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn perspective_infinite_reverse_lh(
-        fov_y_radians: f64,
-        aspect_ratio: f64,
-        z_near: f64,
-    ) -> Self {
-        glam_assert!(z_near > 0.0);
-        let (sin_fov, cos_fov) = math::sin_cos(0.5 * fov_y_radians);
-        let h = cos_fov / sin_fov;
-        let w = h / aspect_ratio;
-        Self::from_cols(
-            DVec4::new(w, 0.0, 0.0, 0.0),
-            DVec4::new(0.0, h, 0.0, 0.0),
-            DVec4::new(0.0, 0.0, 0.0, 1.0),
-            DVec4::new(0.0, 0.0, z_near, 0.0),
-        )
-    }
-
-    /// Creates an infinite right-handed perspective projection matrix with `[0,1]` depth range.
-    ///
-    /// Like `perspective_rh`, but with an infinite value for `z_far`.
-    /// The result is that points near `z_near` are mapped to depth `0`, and as they move towards infinity the depth approaches `1`.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `z_near` or `z_far` are less than or equal to zero when `glam_assert` is
-    /// enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::rh::proj::directx::perspective_infinite` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn perspective_infinite_rh(fov_y_radians: f64, aspect_ratio: f64, z_near: f64) -> Self {
-        glam_assert!(z_near > 0.0);
-        let f = 1.0 / math::tan(0.5 * fov_y_radians);
-        Self::from_cols(
-            DVec4::new(f / aspect_ratio, 0.0, 0.0, 0.0),
-            DVec4::new(0.0, f, 0.0, 0.0),
-            DVec4::new(0.0, 0.0, -1.0, -1.0),
-            DVec4::new(0.0, 0.0, -z_near, 0.0),
-        )
-    }
-
-    /// Creates an infinite reverse right-handed perspective projection matrix with `[0,1]` depth range.
-    ///
-    /// Similar to `perspective_infinite_rh`, but maps `Z = z_near` to a depth of `1` and `Z = infinity` to a depth of `0`.
-    ///
-    /// # Panics
-    ///
-    /// Will panic if `z_near` is less than or equal to zero when `glam_assert` is enabled.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::rh::proj::directx::perspective_infinite_reverse` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn perspective_infinite_reverse_rh(
-        fov_y_radians: f64,
-        aspect_ratio: f64,
-        z_near: f64,
-    ) -> Self {
-        glam_assert!(z_near > 0.0);
-        let f = 1.0 / math::tan(0.5 * fov_y_radians);
-        Self::from_cols(
-            DVec4::new(f / aspect_ratio, 0.0, 0.0, 0.0),
-            DVec4::new(0.0, f, 0.0, 0.0),
-            DVec4::new(0.0, 0.0, 0.0, -1.0),
-            DVec4::new(0.0, 0.0, z_near, 0.0),
-        )
-    }
-
-    /// Creates a right-handed orthographic projection matrix with `[-1,1]` depth
-    /// range.  This is the same as the OpenGL `glOrtho` function in OpenGL.
-    /// See
-    /// <https://www.khronos.org/registry/OpenGL-Refpages/gl2.1/xhtml/glOrtho.xml>
-    ///
-    /// Useful to map a right-handed coordinate system to the normalized device coordinates that OpenGL expects.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::rh::proj::opengl::orthographic` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn orthographic_rh_gl(
-        left: f64,
-        right: f64,
-        bottom: f64,
-        top: f64,
-        near: f64,
-        far: f64,
-    ) -> Self {
-        let a = 2.0 / (right - left);
-        let b = 2.0 / (top - bottom);
-        let c = 2.0 / (near - far);
-        let tx = -(right + left) / (right - left);
-        let ty = -(top + bottom) / (top - bottom);
-        let tz = -(far + near) / (far - near);
-
-        Self::from_cols(
-            DVec4::new(a, 0.0, 0.0, 0.0),
-            DVec4::new(0.0, b, 0.0, 0.0),
-            DVec4::new(0.0, 0.0, c, 0.0),
-            DVec4::new(tx, ty, tz, 1.0),
-        )
-    }
-
-    /// Creates a left-handed orthographic projection matrix with `[0,1]` depth range.
-    ///
-    /// Useful to map a left-handed coordinate system to the normalized device coordinates that WebGPU/Direct3D/Metal expect.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::lh::proj::directx::orthographic` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn orthographic_lh(
-        left: f64,
-        right: f64,
-        bottom: f64,
-        top: f64,
-        near: f64,
-        far: f64,
-    ) -> Self {
-        let rcp_width = 1.0 / (right - left);
-        let rcp_height = 1.0 / (top - bottom);
-        let r = 1.0 / (far - near);
-        Self::from_cols(
-            DVec4::new(rcp_width + rcp_width, 0.0, 0.0, 0.0),
-            DVec4::new(0.0, rcp_height + rcp_height, 0.0, 0.0),
-            DVec4::new(0.0, 0.0, r, 0.0),
-            DVec4::new(
-                -(left + right) * rcp_width,
-                -(top + bottom) * rcp_height,
-                -r * near,
-                1.0,
-            ),
-        )
-    }
-
-    /// Creates a right-handed orthographic projection matrix with `[0,1]` depth range.
-    ///
-    /// Useful to map a right-handed coordinate system to the normalized device coordinates that WebGPU/Direct3D/Metal expect.
-    #[deprecated(
-        since = "0.33.1",
-        note = "use the `glam::dcamera::rh::proj::directx::orthographic` function instead"
-    )]
-    #[inline]
-    #[must_use]
-    pub fn orthographic_rh(
-        left: f64,
-        right: f64,
-        bottom: f64,
-        top: f64,
-        near: f64,
-        far: f64,
-    ) -> Self {
-        let rcp_width = 1.0 / (right - left);
-        let rcp_height = 1.0 / (top - bottom);
-        let r = 1.0 / (near - far);
-        Self::from_cols(
-            DVec4::new(rcp_width + rcp_width, 0.0, 0.0, 0.0),
-            DVec4::new(0.0, rcp_height + rcp_height, 0.0, 0.0),
-            DVec4::new(0.0, 0.0, r, 0.0),
-            DVec4::new(
-                -(left + right) * rcp_width,
-                -(top + bottom) * rcp_height,
-                r * near,
-                1.0,
-            ),
-        )
     }
 
     /// Transforms the given 3D vector as a point, applying perspective correction.
@@ -1395,6 +920,7 @@ impl DMat4 {
     /// Will panic if the 3rd row of `self` is not `(0, 0, 0, 1)` when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn transform_point3(&self, rhs: DVec3) -> DVec3 {
         glam_assert!(self.row(3).abs_diff_eq(DVec4::W, 1e-6));
         let mut res = self.x_axis.mul(rhs.x);
@@ -1416,6 +942,7 @@ impl DMat4 {
     /// Will panic if the 3rd row of `self` is not `(0, 0, 0, 1)` when `glam_assert` is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn transform_vector3(&self, rhs: DVec3) -> DVec3 {
         glam_assert!(self.row(3).abs_diff_eq(DVec4::W, 1e-6));
         let mut res = self.x_axis.mul(rhs.x);

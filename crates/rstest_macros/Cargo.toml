@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.85"
 name = "rstest_macros"
-version = "0.27.0"
+version = "0.28.0"
 authors = ["Michele d'Amico <michele.damico@gmail.com>"]
 build = "build.rs"
 autolib = false
@@ -33,6 +33,7 @@ keywords = [
 categories = ["development-tools::testing"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/la10736/rstest"
+resolver = "3"
 
 [features]
 async-timeout = []
@@ -89,7 +90,7 @@ version = "1.0.2"
 version = "1.4.1"
 
 [dev-dependencies.rstest]
-version = "0.25.0"
+version = "0.27.0"
 default-features = false
 
 [build-dependencies.rustc_version]

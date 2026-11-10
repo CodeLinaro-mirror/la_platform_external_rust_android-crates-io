@@ -1,12 +1,12 @@
 // Generated from mat.rs.tera template. Edit the template, not the generated file.
 
-use crate::{f64::math, swizzles::*, DMat3, DVec2, Mat2};
+use crate::{DMat3, DVec2, Mat2, f64::math, swizzles::*};
 use core::fmt;
 use core::iter::{Product, Sum};
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-#[cfg(feature = "zerocopy")]
-use zerocopy_derive::*;
+#[cfg(feature = "zerocopy-08")]
+use zerocopy_derive_08::*;
 
 /// Creates a 2x2 matrix from two column vectors.
 #[inline(always)]
@@ -19,7 +19,7 @@ pub const fn dmat2(x_axis: DVec2, y_axis: DVec2) -> DMat2 {
 #[derive(Clone, Copy)]
 #[cfg_attr(feature = "bytemuck", derive(bytemuck::Pod, bytemuck::Zeroable))]
 #[cfg_attr(
-    feature = "zerocopy",
+    feature = "zerocopy-08",
     derive(FromBytes, Immutable, IntoBytes, KnownLayout)
 )]
 #[cfg_attr(feature = "cuda", repr(align(16)))]
@@ -170,6 +170,7 @@ impl DMat2 {
     /// Panics if `i` or `j` is greater than 2.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub fn from_mat3_minor(m: DMat3, i: usize, j: usize) -> Self {
         match (i, j) {
             (0, 0) => Self::from_cols(m.y_axis.yz(), m.z_axis.yz()),
@@ -194,6 +195,7 @@ impl DMat2 {
     /// Panics if `slice` is less than 4 elements long.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub const fn from_cols_slice(slice: &[f64]) -> Self {
         Self::new(slice[0], slice[1], slice[2], slice[3])
     }
@@ -204,6 +206,7 @@ impl DMat2 {
     ///
     /// Panics if `slice` is less than 4 elements long.
     #[inline]
+    #[track_caller]
     pub fn write_cols_to_slice(&self, slice: &mut [f64]) {
         slice[0] = self.x_axis.x;
         slice[1] = self.x_axis.y;
@@ -223,6 +226,7 @@ impl DMat2 {
     /// Panics if `slice` is less than 4 elements long.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub const fn from_rows_slice(slice: &[f64]) -> Self {
         Self::new(slice[0], slice[2], slice[1], slice[3])
     }
@@ -234,6 +238,7 @@ impl DMat2 {
     /// Panics if `index` is greater than 1.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub fn col(&self, index: usize) -> DVec2 {
         match index {
             0 => self.x_axis,
@@ -248,6 +253,7 @@ impl DMat2 {
     ///
     /// Panics if `index` is greater than 1.
     #[inline]
+    #[track_caller]
     pub fn col_mut(&mut self, index: usize) -> &mut DVec2 {
         match index {
             0 => &mut self.x_axis,
@@ -265,6 +271,7 @@ impl DMat2 {
     /// Panics if `index` is greater than 1.
     #[inline]
     #[must_use]
+    #[track_caller]
     pub fn row(&self, index: usize) -> DVec2 {
         match index {
             0 => DVec2::new(self.x_axis.x, self.y_axis.x),
@@ -283,6 +290,7 @@ impl DMat2 {
     ///
     /// Panics if `index` is greater than 1.
     #[inline]
+    #[track_caller]
     pub fn set_row(&mut self, index: usize, row: DVec2) {
         match index {
             0 => {
@@ -341,61 +349,62 @@ impl DMat2 {
     /// inverted matrix and true is returned.
     ///
     /// If `CHECKED` is false then the determinant is not checked and if it is zero the resulting
-    /// inverted matrix will be invalid. Will panic if the determinant of `self` is zero when
-    /// `glam_assert` is enabled.
+    /// inverted matrix will be invalid. Will panic if the resulting inverted matrix is not finite
+    /// when `glam_assert` is enabled.
     ///
     /// A tuple containing the inverted matrix and a bool is used instead of an option here as
     /// regular Rust enums put the discriminant first which can result in a lot of padding if the
     /// matrix is aligned.
     #[inline(always)]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     fn inverse_checked<const CHECKED: bool>(&self) -> (Self, bool) {
-        let det = self.determinant();
+        let inv_det = 1.0 / self.determinant();
+        let m = Self::new(
+            self.y_axis.y * inv_det,
+            self.x_axis.y * -inv_det,
+            self.y_axis.x * -inv_det,
+            self.x_axis.x * inv_det,
+        );
         if CHECKED {
-            if det == 0.0 {
+            if !m.is_finite() {
                 return (Self::ZERO, false);
             }
         } else {
-            glam_assert!(det != 0.0);
+            glam_assert!(m.is_finite());
         }
-        let inv_det = 1.0 / det;
-        (
-            Self::new(
-                self.y_axis.y * inv_det,
-                self.x_axis.y * -inv_det,
-                self.y_axis.x * -inv_det,
-                self.x_axis.x * inv_det,
-            ),
-            true,
-        )
+        (m, true)
     }
 
     /// Returns the inverse of `self`.
     ///
-    /// If the matrix is not invertible the returned matrix will be invalid.
+    /// If the matrix is not invertible the returned matrix will be invalid. The
+    /// returned matrix will also be invalid if the inverse is not finite, which can
+    /// happen when `self` contains very large or very small values. Use
+    /// [`Self::try_inverse`] or [`Self::inverse_or_zero`] to detect these cases.
     ///
     /// # Panics
     ///
-    /// Will panic if the determinant of `self` is zero when `glam_assert` is enabled.
+    /// Will panic if the resulting inverted matrix is not finite when `glam_assert`
+    /// is enabled.
     #[inline]
     #[must_use]
+    #[cfg_attr(any(debug_assertions, feature = "glam-assert"), track_caller)]
     pub fn inverse(&self) -> Self {
         self.inverse_checked::<false>().0
     }
 
-    /// Returns the inverse of `self` or `None` if the matrix is not invertible.
+    /// Returns the inverse of `self` or `None` if the matrix is not invertible, or if
+    /// the inverse is not finite.
     #[inline]
     #[must_use]
     pub fn try_inverse(&self) -> Option<Self> {
         let (m, is_valid) = self.inverse_checked::<true>();
-        if is_valid {
-            Some(m)
-        } else {
-            None
-        }
+        if is_valid { Some(m) } else { None }
     }
 
-    /// Returns the inverse of `self` or `DMat2::ZERO` if the matrix is not invertible.
+    /// Returns the inverse of `self` or `DMat2::ZERO` if the matrix is not
+    /// invertible, or if the inverse is not finite.
     #[inline]
     #[must_use]
     pub fn inverse_or_zero(&self) -> Self {

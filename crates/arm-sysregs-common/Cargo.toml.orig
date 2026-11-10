@@ -3,7 +3,7 @@
 
 [package]
 name = "arm-sysregs-common"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Common macros for the Armv8-A system register crates"
@@ -19,8 +19,12 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
+bitflags = { workspace = true }
 pastey = "0.2.3"
-num_enum = { version = "0.7.5", default-features = false }
+num_enum = { version = "0.7.6", default-features = false }
 
 [features]
 fakes = []
+
+[lints]
+workspace = true

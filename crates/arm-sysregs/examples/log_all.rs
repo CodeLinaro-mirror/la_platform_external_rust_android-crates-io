@@ -1373,6 +1373,11 @@ fn entry(_: u64, _: u64, _: u64, _: u64) -> ! {
     );
     #[cfg(all(any(test, feature = "fakes", target_arch = "aarch64"), feature = "el1"))]
     info!(
+        "accdata_el1 = {:?}",
+        arm_sysregs::el1::accessors::read_accdata_el1()
+    );
+    #[cfg(all(any(test, feature = "fakes", target_arch = "aarch64"), feature = "el1"))]
+    info!(
         "actlr_el1 = {:?}",
         arm_sysregs::el1::accessors::read_actlr_el1()
     );
@@ -1600,6 +1605,11 @@ fn entry(_: u64, _: u64, _: u64, _: u64) -> ! {
     info!(
         "id_aa64dfr1_el1 = {:?}",
         arm_sysregs::el1::accessors::read_id_aa64dfr1_el1()
+    );
+    #[cfg(all(any(test, feature = "fakes", target_arch = "aarch64"), feature = "el1"))]
+    info!(
+        "id_aa64isar0_el1 = {:?}",
+        arm_sysregs::el1::accessors::read_id_aa64isar0_el1()
     );
     #[cfg(all(any(test, feature = "fakes", target_arch = "aarch64"), feature = "el1"))]
     info!(
@@ -2090,6 +2100,16 @@ fn entry(_: u64, _: u64, _: u64, _: u64) -> ! {
     );
     #[cfg(all(any(test, feature = "fakes", target_arch = "aarch64"), feature = "el2"))]
     info!(
+        "hacdbsbr_el2 = {:?}",
+        arm_sysregs::el2::accessors::read_hacdbsbr_el2()
+    );
+    #[cfg(all(any(test, feature = "fakes", target_arch = "aarch64"), feature = "el2"))]
+    info!(
+        "hacdbscons_el2 = {:?}",
+        arm_sysregs::el2::accessors::read_hacdbscons_el2()
+    );
+    #[cfg(all(any(test, feature = "fakes", target_arch = "aarch64"), feature = "el2"))]
+    info!(
         "hacr_el2 = {:?}",
         arm_sysregs::el2::accessors::read_hacr_el2()
     );
@@ -2107,6 +2127,16 @@ fn entry(_: u64, _: u64, _: u64, _: u64) -> ! {
     info!(
         "hcr_el2 = {:?}",
         arm_sysregs::el2::accessors::read_hcr_el2()
+    );
+    #[cfg(all(any(test, feature = "fakes", target_arch = "aarch64"), feature = "el2"))]
+    info!(
+        "hdbssbr_el2 = {:?}",
+        arm_sysregs::el2::accessors::read_hdbssbr_el2()
+    );
+    #[cfg(all(any(test, feature = "fakes", target_arch = "aarch64"), feature = "el2"))]
+    info!(
+        "hdbssprod_el2 = {:?}",
+        arm_sysregs::el2::accessors::read_hdbssprod_el2()
     );
     #[cfg(all(any(test, feature = "fakes", target_arch = "aarch64"), feature = "el2"))]
     info!(
@@ -2374,6 +2404,11 @@ fn entry(_: u64, _: u64, _: u64, _: u64) -> ! {
     info!(
         "fgwte3_el3 = {:?}",
         arm_sysregs::el3::accessors::read_fgwte3_el3()
+    );
+    #[cfg(all(any(test, feature = "fakes", target_arch = "aarch64"), feature = "el3"))]
+    info!(
+        "gpcbw_el3 = {:?}",
+        arm_sysregs::el3::accessors::read_gpcbw_el3()
     );
     #[cfg(all(any(test, feature = "fakes", target_arch = "aarch64"), feature = "el3"))]
     info!(
