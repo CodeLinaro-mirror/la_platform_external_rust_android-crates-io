@@ -18,7 +18,7 @@ rust_library {
     host_supported: true,
     crate_name: "arc_swap",
     cargo_env_compat: true,
-    cargo_pkg_version: "1.9.3",
+    cargo_pkg_version: "1.9.5",
     crate_root: "src/lib.rs",
     edition: "2018",
     proc_macros: ["librustversion"],

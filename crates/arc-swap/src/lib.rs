@@ -173,6 +173,7 @@ use crate::imports::Arc;
 use crate::access::{Access, Map};
 pub use crate::as_raw::AsRaw;
 pub use crate::cache::Cache;
+use crate::ref_cnt::check_tag;
 pub use crate::ref_cnt::RefCnt;
 use crate::strategy::hybrid::{DefaultConfig, HybridStrategy};
 use crate::strategy::sealed::Protected;
@@ -392,6 +393,7 @@ impl<T: RefCnt, S: Strategy<T>> ArcSwapAny<T, S> {
 
     /// Constructs a new storage while customizing the protection strategy.
     pub fn with_strategy(val: T, strategy: S) -> Self {
+        check_tag(&val);
         // The AtomicPtr requires *mut in its interface. We are more like *const, so we cast it.
         // However, we always go back to *const right away when we get the pointer on the other
         // side, so it should be fine.
@@ -483,6 +485,7 @@ impl<T: RefCnt, S: Strategy<T>> ArcSwapAny<T, S> {
 
     /// Exchanges the value inside this instance.
     pub fn swap(&self, new: T) -> T {
+        check_tag(&new);
         let new = T::into_ptr(new);
         // AcqRel needed to publish the target of the new pointer and get the target of the old
         // one.
@@ -516,6 +519,7 @@ impl<T: RefCnt, S: Strategy<T>> ArcSwapAny<T, S> {
         C: AsRaw<T::Base>,
         S: CaS<T>,
     {
+        check_tag(&new);
         let protected = unsafe { self.strategy.compare_and_swap(&self.ptr, current, new) };
         Guard { inner: protected }
     }
@@ -1332,5 +1336,38 @@ mod tests {
         // But new one reuses now vacant the slot and doesn't create a new Arc
         let _guard = shared.load();
         assert_eq!(count, Arc::strong_count(&a));
+    }
+
+    /// A confirmed debt is paid even if the `ArcSwap` moved (to another address) while the guard
+    /// lives.
+    #[test]
+    fn moved_storage_box() {
+        let x = Arc::new(42usize);
+        let keep = Arc::clone(&x);
+        let a = ArcSwap::from(x);
+        let g = a.load();
+        let b = Box::new(a);
+        b.store(Arc::new(0));
+        // The guard owns the paid reference.
+        assert_eq!(2, Arc::strong_count(&keep));
+        assert_eq!(42, **g);
+        drop(g);
+        assert_eq!(1, Arc::strong_count(&keep));
+    }
+
+    /// Same, moving the other way, by `into_inner` taking the `ArcSwap` by value.
+    #[test]
+    fn moved_storage_into_inner() {
+        let x = Arc::new(42usize);
+        let keep = Arc::clone(&x);
+        let b = Box::new(ArcSwap::from(x));
+        let g = ArcSwap::load(&b);
+        let inner = (*b).into_inner();
+        drop(inner);
+        // The guard owns the paid reference.
+        assert_eq!(2, Arc::strong_count(&keep));
+        assert_eq!(42, **g);
+        drop(g);
+        assert_eq!(1, Arc::strong_count(&keep));
     }
 }
