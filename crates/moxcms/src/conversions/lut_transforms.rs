@@ -27,17 +27,18 @@
  * // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #![cfg(feature = "lut")]
-use crate::conversions::lut3x3::create_lut3x3;
+use crate::conversions::lut3x3::{create_lut3x3, stage_lut_3x3};
 #[cfg(feature = "any_to_any")]
 use crate::conversions::lut3x3::{katana_input_stage_lut_3x3, katana_output_stage_lut_3x3};
 use crate::conversions::lut3x4::{create_lut3_samples_norm, create_lut3x4};
 use crate::conversions::lut4::*;
 use crate::conversions::mab::{prepare_mab_3x3, prepare_mba_3x3};
 use crate::conversions::transform_lut3_to_4::make_transform_3x4;
+use crate::err::try_vec;
 use crate::mlaf::mlaf;
 use crate::{
     CmsError, ColorProfile, DataColorSpace, InPlaceStage, Layout, LutWarehouse, Matrix3f,
-    ProfileVersion, TransformExecutor, TransformOptions,
+    RenderingIntent, Stage, TransformExecutor, TransformOptions,
 };
 use num_traits::AsPrimitive;
 use std::sync::Arc;
@@ -84,6 +85,7 @@ pub(crate) trait Lut3x3Factory {
         const DST_LAYOUT: u8,
         const GRID_SIZE: usize,
         const BIT_DEPTH: usize,
+        const BINS: usize,
     >(
         lut: Vec<f32>,
         options: TransformOptions,
@@ -97,18 +99,73 @@ pub(crate) trait Lut3x3Factory {
         (): LutBarycentricReduction<T, u16>;
 }
 
+/// Fills the given plane of the last input, three outputs a node.
+pub(crate) type FillPlane<'a> = Box<dyn FnMut(usize, &mut [f32]) -> Result<(), CmsError> + 'a>;
+
+/// A 4D grid of three outputs a node, made whole or a plane of the last input at a time,
+/// so that a transform can lay it out in its own layout without holding it twice.
+pub(crate) enum Grid4x3<'a> {
+    Whole(Vec<f32>),
+    Planes {
+        planes: usize,
+        plane: usize,
+        fill: FillPlane<'a>,
+    },
+}
+
+impl Grid4x3<'_> {
+    pub(crate) fn collect<E>(self, map: impl Fn(&[f32; 3]) -> E) -> Result<Vec<E>, CmsError> {
+        match self {
+            Grid4x3::Whole(lut) => Ok(lut.as_chunks::<3>().0.iter().map(map).collect()),
+            Grid4x3::Planes {
+                planes,
+                plane,
+                mut fill,
+            } => {
+                let mut out = Vec::new();
+                out.try_reserve_exact(planes * plane)
+                    .map_err(|_| CmsError::OutOfMemory(planes * plane))?;
+                let mut part = try_vec![0f32; plane * 3];
+                for k in 0..planes {
+                    fill(k, &mut part)?;
+                    out.extend(part.as_chunks::<3>().0.iter().map(&map));
+                }
+                Ok(out)
+            }
+        }
+    }
+
+    pub(crate) fn into_f32(self) -> Result<Vec<f32>, CmsError> {
+        match self {
+            Grid4x3::Whole(lut) => Ok(lut),
+            Grid4x3::Planes {
+                planes,
+                plane,
+                mut fill,
+            } => {
+                let mut out = try_vec![0f32; planes * plane * 3];
+                for (k, part) in out.chunks_exact_mut(plane * 3).enumerate() {
+                    fill(k, part)?;
+                }
+                Ok(out)
+            }
+        }
+    }
+}
+
 pub(crate) trait Lut4x3Factory {
     fn make_transform_4x3<
         T: Copy + AsPrimitive<f32> + Default + PointeeSizeExpressible + 'static + Send + Sync,
         const LAYOUT: u8,
         const GRID_SIZE: usize,
         const BIT_DEPTH: usize,
+        const BINS: usize,
     >(
-        lut: Vec<f32>,
+        lut: Grid4x3<'_>,
         options: TransformOptions,
         color_space: DataColorSpace,
         is_linear: bool,
-    ) -> Arc<dyn TransformExecutor<T> + Sync + Send>
+    ) -> Result<Arc<dyn TransformExecutor<T> + Sync + Send>, CmsError>
     where
         f32: AsPrimitive<T>,
         u32: AsPrimitive<T>,
@@ -116,9 +173,9 @@ pub(crate) trait Lut4x3Factory {
         (): LutBarycentricReduction<T, u16>;
 }
 
-fn pcs_lab_v4_to_v2(profile: &ColorProfile, lut: &mut [f32]) {
+fn pcs_lab_v4_to_v2(profile: &ColorProfile, intent: RenderingIntent, lut: &mut [f32]) {
     if profile.pcs == DataColorSpace::Lab
-        && profile.version_internal < ProfileVersion::V4_0
+        && profile.pcs_to_device_is_lut16(intent)
         && lut.len().is_multiple_of(3)
     {
         assert_eq!(
@@ -139,9 +196,9 @@ fn pcs_lab_v4_to_v2(profile: &ColorProfile, lut: &mut [f32]) {
     }
 }
 
-fn pcs_lab_v2_to_v4(profile: &ColorProfile, lut: &mut [f32]) {
+fn pcs_lab_v2_to_v4(profile: &ColorProfile, intent: RenderingIntent, lut: &mut [f32]) {
     if profile.pcs == DataColorSpace::Lab
-        && profile.version_internal < ProfileVersion::V4_0
+        && profile.device_to_pcs_is_lut16(intent)
         && lut.len().is_multiple_of(3)
     {
         assert_eq!(
@@ -162,6 +219,29 @@ fn pcs_lab_v2_to_v4(profile: &ColorProfile, lut: &mut [f32]) {
     }
 }
 
+fn source_pcs_to_dest_pcs(
+    source: &ColorProfile,
+    dest: &ColorProfile,
+    intent: RenderingIntent,
+    apply_bpc_scaling: impl Fn(&mut [f32]),
+    lut: &mut [f32],
+) -> Result<(), CmsError> {
+    pcs_lab_v2_to_v4(source, intent, lut);
+
+    if source.pcs == DataColorSpace::Xyz && dest.pcs == DataColorSpace::Lab {
+        apply_bpc_scaling(lut);
+        StageXyzToLab::default().transform(lut)?;
+    } else if source.pcs == DataColorSpace::Lab && dest.pcs == DataColorSpace::Xyz {
+        StageLabToXyz::default().transform(lut)?;
+        apply_bpc_scaling(lut);
+    } else {
+        apply_bpc_scaling(lut);
+    }
+
+    pcs_lab_v4_to_v2(dest, intent, lut);
+    Ok(())
+}
+
 macro_rules! make_transform_3x3_fn {
     ($method_name: ident, $exec_impl: ident) => {
         fn $method_name<
@@ -174,6 +254,7 @@ macro_rules! make_transform_3x3_fn {
                 + PointeeSizeExpressible,
             const GRID_SIZE: usize,
             const BIT_DEPTH: usize,
+            const BINS: usize,
         >(
             src_layout: Layout,
             dst_layout: Layout,
@@ -196,6 +277,7 @@ macro_rules! make_transform_3x3_fn {
                         { Layout::Rgb as u8 },
                         GRID_SIZE,
                         BIT_DEPTH,
+                        BINS,
                     >(lut, options, color_space, is_linear),
                     Layout::Rgba => $exec_impl::make_transform_3x3::<
                         T,
@@ -203,6 +285,7 @@ macro_rules! make_transform_3x3_fn {
                         { Layout::Rgba as u8 },
                         GRID_SIZE,
                         BIT_DEPTH,
+                        BINS,
                     >(lut, options, color_space, is_linear),
                     _ => unimplemented!(),
                 },
@@ -213,6 +296,7 @@ macro_rules! make_transform_3x3_fn {
                         { Layout::Rgb as u8 },
                         GRID_SIZE,
                         BIT_DEPTH,
+                        BINS,
                     >(lut, options, color_space, is_linear),
                     Layout::Rgba => $exec_impl::make_transform_3x3::<
                         T,
@@ -220,6 +304,7 @@ macro_rules! make_transform_3x3_fn {
                         { Layout::Rgba as u8 },
                         GRID_SIZE,
                         BIT_DEPTH,
+                        BINS,
                     >(lut, options, color_space, is_linear),
                     _ => unimplemented!(),
                 },
@@ -241,13 +326,14 @@ macro_rules! make_transform_4x3_fn {
                 + PointeeSizeExpressible,
             const GRID_SIZE: usize,
             const BIT_DEPTH: usize,
+            const BINS: usize,
         >(
             dst_layout: Layout,
-            lut: Vec<f32>,
+            lut: Grid4x3<'_>,
             options: TransformOptions,
             data_color_space: DataColorSpace,
             is_linear: bool,
-        ) -> Arc<dyn TransformExecutor<T> + Send + Sync>
+        ) -> Result<Arc<dyn TransformExecutor<T> + Send + Sync>, CmsError>
         where
             f32: AsPrimitive<T>,
             u32: AsPrimitive<T>,
@@ -260,12 +346,14 @@ macro_rules! make_transform_4x3_fn {
                     { Layout::Rgb as u8 },
                     GRID_SIZE,
                     BIT_DEPTH,
+                    BINS,
                 >(lut, options, data_color_space, is_linear),
                 Layout::Rgba => $exec_name::make_transform_4x3::<
                     T,
                     { Layout::Rgba as u8 },
                     GRID_SIZE,
                     BIT_DEPTH,
+                    BINS,
                 >(lut, options, data_color_space, is_linear),
                 _ => unimplemented!(),
             }
@@ -324,7 +412,9 @@ use crate::conversions::transform_lut4_to_3::DefaultLut4x3Factory;
 #[cfg(not(all(target_arch = "aarch64", feature = "neon_luts")))]
 make_transform_4x3_fn!(make_transformer_4x3, DefaultLut4x3Factory);
 
-use crate::conversions::prelude_lut_xyz_rgb::{create_rgb_lin_lut, prepare_inverse_lut_rgb_xyz};
+use crate::conversions::prelude_lut_xyz_rgb::{
+    create_rgb_lin_lut, inverse_lut_rgb_xyz_stage, prepare_inverse_lut_rgb_xyz,
+};
 use crate::conversions::xyz_lab::{StageLabToXyz, StageXyzToLab};
 use crate::transform::PointeeSizeExpressible;
 use crate::trc::GammaLutInterpolate;
@@ -333,6 +423,114 @@ use crate::trc::GammaLutInterpolate;
 use crate::conversions::neon::NeonLut4x3Factory;
 #[cfg(all(target_arch = "aarch64", feature = "neon_luts"))]
 make_transform_4x3_fn!(make_transformer_4x3, NeonLut4x3Factory);
+
+/// What turns the PCS into the destination's device values in a grid made by planes.
+enum PcsToDevice {
+    Rgb(Box<dyn InPlaceStage>),
+    Lut(Box<dyn Stage>),
+}
+
+/// The 4-ink grid of [`make_lut_transform`] made a plane of the last ink at a time, for a lut8/lut16
+/// device to PCS table into a matrix-shaper or lut8/lut16 destination; None otherwise.
+fn grid_4x3_by_planes<
+    'a,
+    T: Copy
+        + Default
+        + AsPrimitive<f32>
+        + Send
+        + Sync
+        + AsPrimitive<usize>
+        + PointeeSizeExpressible
+        + GammaLutInterpolate,
+    const GRID_SIZE: usize,
+    const BIT_DEPTH: usize,
+    const GAMMA_LUT: usize,
+>(
+    source: &'a ColorProfile,
+    dest: &'a ColorProfile,
+    options: TransformOptions,
+) -> Result<Option<Grid4x3<'a>>, CmsError>
+where
+    f32: AsPrimitive<T>,
+    u32: AsPrimitive<T>,
+{
+    let Some(LutWarehouse::Lut(device_to_pcs)) = source.get_device_to_pcs(options.rendering_intent)
+    else {
+        return Ok(None);
+    };
+    if device_to_pcs.num_input_channels != 4 {
+        return Err(CmsError::UnsupportedProfileConnection);
+    }
+    let lut_stage = stage_lut_4x3(device_to_pcs, options, source.pcs)?;
+    let last = match dest.pcs {
+        DataColorSpace::Xyz if dest.is_matrix_shaper() => PcsToDevice::Rgb(
+            inverse_lut_rgb_xyz_stage::<T, BIT_DEPTH, GAMMA_LUT>(dest, options)?,
+        ),
+        DataColorSpace::Lab => match dest
+            .get_pcs_to_device(options.rendering_intent)
+            .ok_or(CmsError::UnsupportedProfileConnection)?
+        {
+            LutWarehouse::Lut(lut) => {
+                if lut.num_input_channels != 3 || lut.num_output_channels != 3 {
+                    return Err(CmsError::UnsupportedProfileConnection);
+                }
+                PcsToDevice::Lut(stage_lut_3x3(lut, options, dest.pcs)?)
+            }
+            LutWarehouse::Multidimensional(_) => return Ok(None),
+        },
+        _ => return Ok(None),
+    };
+    let black_points = source
+        .detect_black_point(options.rendering_intent, TransformDirection::DeviceToPcs)
+        .zip(dest.detect_black_point(options.rendering_intent, TransformDirection::PcsToDevice));
+    let apply_bpc_scaling = move |lut: &mut [f32]| {
+        if let Some((src_bp, dest_bp)) = black_points {
+            compensate_bpc_in_lut(lut, src_bp, dest_bp);
+        }
+    };
+
+    let plane = GRID_SIZE * GRID_SIZE * GRID_SIZE;
+    let recpeq = 1f32 / (GRID_SIZE - 1) as f32;
+    let mut samples = try_vec![0f32; plane * 4];
+    for (i, sample) in samples.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let (c, m, y) = (
+            i / (GRID_SIZE * GRID_SIZE),
+            i / GRID_SIZE % GRID_SIZE,
+            i % GRID_SIZE,
+        );
+        *sample = [c as f32 * recpeq, m as f32 * recpeq, y as f32 * recpeq, 0.];
+    }
+    let mut scratch = match last {
+        PcsToDevice::Lut(_) => try_vec![0f32; plane * 3],
+        PcsToDevice::Rgb(_) => Vec::new(),
+    };
+    let fill = move |k: usize, out: &mut [f32]| -> Result<(), CmsError> {
+        let k = k as f32 * recpeq;
+        for sample in samples.as_chunks_mut::<4>().0 {
+            sample[3] = k;
+        }
+        lut_stage.transform(&samples, out)?;
+        source_pcs_to_dest_pcs(
+            source,
+            dest,
+            options.rendering_intent,
+            apply_bpc_scaling,
+            out,
+        )?;
+        match &last {
+            PcsToDevice::Rgb(stage) => stage.transform(out),
+            PcsToDevice::Lut(stage) => {
+                scratch.copy_from_slice(out);
+                stage.transform(&scratch, out)
+            }
+        }
+    };
+    Ok(Some(Grid4x3::Planes {
+        planes: GRID_SIZE,
+        plane,
+        fill: Box::new(fill),
+    }))
+}
 
 #[inline(never)]
 #[cold]
@@ -348,6 +546,7 @@ pub(crate) fn make_lut_transform<
     const BIT_DEPTH: usize,
     const LINEAR_CAP: usize,
     const GAMMA_LUT: usize,
+    const BINS: usize,
 >(
     src_layout: Layout,
     source: &ColorProfile,
@@ -420,14 +619,14 @@ where
 
             let mut stages = Vec::new();
 
-            stages.push(katana_pcs_lab_v2_to_v4(source));
+            stages.push(katana_pcs_lab_v2_to_v4(source, options.rendering_intent));
             if source.pcs == DataColorSpace::Lab {
                 stages.push(Box::new(KatanaStageLabToXyz::default()));
             }
             if dest.pcs == DataColorSpace::Lab {
                 stages.push(Box::new(KatanaStageXyzToLab::default()));
             }
-            stages.push(katana_pcs_lab_v4_to_v2(dest));
+            stages.push(katana_pcs_lab_v4_to_v2(dest, options.rendering_intent));
 
             let final_stage = if dest.has_pcs_to_device_lut() {
                 let pcs_to_device = dest
@@ -467,51 +666,53 @@ where
             }));
         }
 
-        let mut lut = match source.get_device_to_pcs(options.rendering_intent).ok_or(
-            CmsError::UnsupportedLutRenderingIntent(source.rendering_intent),
+        let lut = match grid_4x3_by_planes::<T, GRID_SIZE, BIT_DEPTH, GAMMA_LUT>(
+            source, dest, options,
         )? {
-            LutWarehouse::Lut(lut) => create_lut4::<GRID_SIZE>(lut, options, source.pcs)?,
-            LutWarehouse::Multidimensional(m_curves) => {
-                let mut samples = create_lut4_norm_samples::<GRID_SIZE>();
-                prepare_mab_4x3(m_curves, &mut samples, options, source.pcs)?
+            Some(grid) => grid,
+            None => {
+                let mut lut = match source.get_device_to_pcs(options.rendering_intent).ok_or(
+                    CmsError::UnsupportedLutRenderingIntent(source.rendering_intent),
+                )? {
+                    LutWarehouse::Lut(lut) => create_lut4::<GRID_SIZE>(lut, options, source.pcs)?,
+                    LutWarehouse::Multidimensional(m_curves) => {
+                        let mut samples = create_lut4_norm_samples::<GRID_SIZE>();
+                        prepare_mab_4x3(m_curves, &mut samples, options, source.pcs)?
+                    }
+                };
+
+                source_pcs_to_dest_pcs(
+                    source,
+                    dest,
+                    options.rendering_intent,
+                    apply_bpc_scaling,
+                    &mut lut,
+                )?;
+
+                if dest.pcs == DataColorSpace::Xyz {
+                    if dest.is_matrix_shaper() {
+                        prepare_inverse_lut_rgb_xyz::<T, BIT_DEPTH, GAMMA_LUT>(
+                            dest, &mut lut, options,
+                        )?;
+                    } else {
+                        return Err(CmsError::UnsupportedProfileConnection);
+                    }
+                } else if dest.pcs == DataColorSpace::Lab {
+                    let pcs_to_device = dest
+                        .get_pcs_to_device(options.rendering_intent)
+                        .ok_or(CmsError::UnsupportedProfileConnection)?;
+                    match pcs_to_device {
+                        LutWarehouse::Lut(lut_data_type) => {
+                            lut = create_lut3x3(lut_data_type, &lut, options, dest.pcs)?
+                        }
+                        LutWarehouse::Multidimensional(mab) => {
+                            prepare_mba_3x3(mab, &mut lut, options, dest.pcs)?
+                        }
+                    }
+                }
+                Grid4x3::Whole(lut)
             }
         };
-
-        pcs_lab_v2_to_v4(source, &mut lut);
-
-        if source.pcs == DataColorSpace::Xyz && dest.pcs == DataColorSpace::Lab {
-            apply_bpc_scaling(&mut lut);
-            let xyz_to_lab = StageXyzToLab::default();
-            xyz_to_lab.transform(&mut lut)?;
-        } else if source.pcs == DataColorSpace::Lab && dest.pcs == DataColorSpace::Xyz {
-            let lab_to_xyz_stage = StageLabToXyz::default();
-            lab_to_xyz_stage.transform(&mut lut)?;
-            apply_bpc_scaling(&mut lut);
-        } else {
-            apply_bpc_scaling(&mut lut);
-        }
-
-        pcs_lab_v4_to_v2(dest, &mut lut);
-
-        if dest.pcs == DataColorSpace::Xyz {
-            if dest.is_matrix_shaper() {
-                prepare_inverse_lut_rgb_xyz::<T, BIT_DEPTH, GAMMA_LUT>(dest, &mut lut, options)?;
-            } else {
-                return Err(CmsError::UnsupportedProfileConnection);
-            }
-        } else if dest.pcs == DataColorSpace::Lab {
-            let pcs_to_device = dest
-                .get_pcs_to_device(options.rendering_intent)
-                .ok_or(CmsError::UnsupportedProfileConnection)?;
-            match pcs_to_device {
-                LutWarehouse::Lut(lut_data_type) => {
-                    lut = create_lut3x3(lut_data_type, &lut, options, dest.pcs)?
-                }
-                LutWarehouse::Multidimensional(mab) => {
-                    prepare_mba_3x3(mab, &mut lut, options, dest.pcs)?
-                }
-            }
-        }
 
         let is_dest_linear_profile = dest.color_space == DataColorSpace::Rgb
             && dest.is_matrix_shaper()
@@ -520,32 +721,32 @@ where
         #[cfg(all(target_arch = "x86_64", feature = "avx_luts"))]
         if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
         {
-            return Ok(make_transformer_4x3_avx_fma::<T, GRID_SIZE, BIT_DEPTH>(
+            return make_transformer_4x3_avx_fma::<T, GRID_SIZE, BIT_DEPTH, BINS>(
                 dst_layout,
                 lut,
                 options,
                 dest.color_space,
                 is_dest_linear_profile,
-            ));
+            );
         }
         #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "sse_luts"))]
         if std::arch::is_x86_feature_detected!("sse4.1") {
-            return Ok(make_transformer_4x3_sse41::<T, GRID_SIZE, BIT_DEPTH>(
+            return make_transformer_4x3_sse41::<T, GRID_SIZE, BIT_DEPTH, BINS>(
                 dst_layout,
                 lut,
                 options,
                 dest.color_space,
                 is_dest_linear_profile,
-            ));
+            );
         }
 
-        Ok(make_transformer_4x3::<T, GRID_SIZE, BIT_DEPTH>(
+        make_transformer_4x3::<T, GRID_SIZE, BIT_DEPTH, BINS>(
             dst_layout,
             lut,
             options,
             dest.color_space,
             is_dest_linear_profile,
-        ))
+        )
     } else if (source.color_space == DataColorSpace::Rgb
         || source.color_space == DataColorSpace::Lab)
         && (dest.color_space == DataColorSpace::Cmyk || dest.color_space == DataColorSpace::Color4)
@@ -581,7 +782,7 @@ where
             return Err(CmsError::UnsupportedProfileConnection);
         }
 
-        pcs_lab_v2_to_v4(source, &mut lut);
+        pcs_lab_v2_to_v4(source, options.rendering_intent, &mut lut);
 
         if source.pcs == DataColorSpace::Xyz && dest.pcs == DataColorSpace::Lab {
             apply_bpc_scaling(&mut lut);
@@ -595,7 +796,7 @@ where
             apply_bpc_scaling(&mut lut);
         }
 
-        pcs_lab_v4_to_v2(dest, &mut lut);
+        pcs_lab_v4_to_v2(dest, options.rendering_intent, &mut lut);
 
         let lut = match dest
             .get_pcs_to_device(options.rendering_intent)
@@ -611,7 +812,7 @@ where
             && dest.is_matrix_shaper()
             && dest.is_linear_matrix_shaper();
 
-        Ok(make_transform_3x4::<T, GRID_SIZE, BIT_DEPTH>(
+        Ok(make_transform_3x4::<T, GRID_SIZE, BIT_DEPTH, BINS>(
             src_layout,
             lut,
             options,
@@ -674,14 +875,14 @@ where
                     }
                 };
 
-            stages.push(katana_pcs_lab_v2_to_v4(source));
+            stages.push(katana_pcs_lab_v2_to_v4(source, options.rendering_intent));
             if source.pcs == DataColorSpace::Lab {
                 stages.push(Box::new(KatanaStageLabToXyz::default()));
             }
             if dest.pcs == DataColorSpace::Lab {
                 stages.push(Box::new(KatanaStageXyzToLab::default()));
             }
-            stages.push(katana_pcs_lab_v4_to_v2(dest));
+            stages.push(katana_pcs_lab_v4_to_v2(dest, options.rendering_intent));
 
             let final_stage = if dest.has_pcs_to_device_lut() {
                 let pcs_to_device = dest
@@ -743,7 +944,7 @@ where
             return Err(CmsError::UnsupportedProfileConnection);
         }
 
-        pcs_lab_v2_to_v4(source, &mut lut);
+        pcs_lab_v2_to_v4(source, options.rendering_intent, &mut lut);
 
         if source.pcs == DataColorSpace::Xyz && dest.pcs == DataColorSpace::Lab {
             apply_bpc_scaling(&mut lut);
@@ -757,7 +958,7 @@ where
             apply_bpc_scaling(&mut lut);
         }
 
-        pcs_lab_v4_to_v2(dest, &mut lut);
+        pcs_lab_v4_to_v2(dest, options.rendering_intent, &mut lut);
 
         if dest.has_pcs_to_device_lut() {
             let pcs_to_device = dest
@@ -783,18 +984,20 @@ where
 
         #[cfg(all(feature = "avx_luts", target_arch = "x86_64"))]
         if std::arch::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") {
-            return Ok(make_transformer_3x3_avx_fma::<T, GRID_SIZE, BIT_DEPTH>(
-                src_layout,
-                dst_layout,
-                lut,
-                options,
-                dest.color_space,
-                is_dest_linear_profile,
-            ));
+            return Ok(
+                make_transformer_3x3_avx_fma::<T, GRID_SIZE, BIT_DEPTH, BINS>(
+                    src_layout,
+                    dst_layout,
+                    lut,
+                    options,
+                    dest.color_space,
+                    is_dest_linear_profile,
+                ),
+            );
         }
         #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "sse_luts"))]
         if std::arch::is_x86_feature_detected!("sse4.1") {
-            return Ok(make_transformer_3x3_sse41::<T, GRID_SIZE, BIT_DEPTH>(
+            return Ok(make_transformer_3x3_sse41::<T, GRID_SIZE, BIT_DEPTH, BINS>(
                 src_layout,
                 dst_layout,
                 lut,
@@ -806,7 +1009,7 @@ where
 
         #[cfg(all(target_arch = "aarch64", feature = "neon_luts"))]
         {
-            Ok(make_transformer_3x3::<T, GRID_SIZE, BIT_DEPTH>(
+            Ok(make_transformer_3x3::<T, GRID_SIZE, BIT_DEPTH, BINS>(
                 src_layout,
                 dst_layout,
                 lut,
@@ -817,7 +1020,7 @@ where
         }
         #[cfg(not(all(target_arch = "aarch64", feature = "neon_luts")))]
         {
-            Ok(make_transformer_3x3::<T, GRID_SIZE, BIT_DEPTH>(
+            Ok(make_transformer_3x3::<T, GRID_SIZE, BIT_DEPTH, BINS>(
                 src_layout,
                 dst_layout,
                 lut,
@@ -836,6 +1039,131 @@ where
         #[cfg(not(feature = "any_to_any"))]
         {
             Err(CmsError::UnsupportedProfileConnection)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::BarycentricWeightScale;
+    use crate::conversions::transform_lut3_to_3::DefaultLut3x3Factory;
+    use crate::conversions::transform_lut4_to_3::DefaultLut4x3Factory;
+
+    fn assert_float_lut_range<T, F3: Lut3x3Factory, F4: Lut4x3Factory>()
+    where
+        T: Copy
+            + Default
+            + PointeeSizeExpressible
+            + AsPrimitive<f64>
+            + AsPrimitive<f32>
+            + Send
+            + Sync,
+        f32: AsPrimitive<T>,
+        u32: AsPrimitive<T>,
+        (): LutBarycentricReduction<T, u8>,
+        (): LutBarycentricReduction<T, u16>,
+    {
+        // These are final execution-grid values, after PCS and destination conversion.
+        // Include both signs beyond the old i16 / 16383 range and an in-range value
+        // that would lose precision if quantized to that grid.
+        const NODE: [f32; 3] = [-3.25, 0.123456, 10.33];
+        let check = |transform: &dyn TransformExecutor<T>, channels: usize| {
+            for v in [0.0f32, 0.25, 0.5, 1.0] {
+                let input = vec![v.as_(); channels];
+                let mut output = [T::default(); 3];
+                transform.transform(&input, &mut output).unwrap();
+                for (actual, expected) in output.into_iter().zip(NODE) {
+                    let actual: f64 = actual.as_();
+                    assert!(
+                        (actual - expected as f64).abs() < 1e-6,
+                        "floating LUT output {actual} differs from {expected}"
+                    );
+                }
+            }
+        };
+
+        for prefer_fixed_point in [true, false] {
+            for barycentric_weight_scale in [
+                BarycentricWeightScale::Low,
+                #[cfg(feature = "options")]
+                BarycentricWeightScale::High,
+            ] {
+                let options = TransformOptions {
+                    prefer_fixed_point,
+                    barycentric_weight_scale,
+                    ..Default::default()
+                };
+                let transform = F3::make_transform_3x3::<
+                    T,
+                    { Layout::Rgb as u8 },
+                    { Layout::Rgb as u8 },
+                    2,
+                    1,
+                    256,
+                >(
+                    NODE.repeat(2usize.pow(3)),
+                    options,
+                    DataColorSpace::Rgb,
+                    true,
+                );
+                check(transform.as_ref(), 3);
+
+                for grid in [
+                    Grid4x3::Whole(NODE.repeat(2usize.pow(4))),
+                    Grid4x3::Planes {
+                        planes: 2,
+                        plane: 2usize.pow(3),
+                        fill: Box::new(|_, out| {
+                            for node in out.as_chunks_mut::<3>().0 {
+                                *node = NODE;
+                            }
+                            Ok(())
+                        }),
+                    },
+                ] {
+                    let transform = F4::make_transform_4x3::<T, { Layout::Rgb as u8 }, 2, 1, 256>(
+                        grid,
+                        options,
+                        DataColorSpace::Rgb,
+                        true,
+                    )
+                    .unwrap();
+                    check(transform.as_ref(), 4);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_float_lut_range_scalar() {
+        assert_float_lut_range::<f32, DefaultLut3x3Factory, DefaultLut4x3Factory>();
+        assert_float_lut_range::<f64, DefaultLut3x3Factory, DefaultLut4x3Factory>();
+    }
+
+    #[cfg(all(target_arch = "aarch64", feature = "neon_luts"))]
+    #[test]
+    fn test_float_lut_range_neon() {
+        assert_float_lut_range::<f32, NeonLut3x3Factory, NeonLut4x3Factory>();
+        assert_float_lut_range::<f64, NeonLut3x3Factory, NeonLut4x3Factory>();
+    }
+
+    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), feature = "sse_luts"))]
+    #[test]
+    fn test_float_lut_range_sse() {
+        if std::arch::is_x86_feature_detected!("sse4.1") {
+            assert_float_lut_range::<f32, SseLut3x3Factory, SseLut4x3Factory>();
+            assert_float_lut_range::<f64, SseLut3x3Factory, SseLut4x3Factory>();
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "avx_luts"))]
+    #[test]
+    fn test_float_lut_range_avx() {
+        if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
+        {
+            assert_float_lut_range::<f32, AvxLut3x3Factory, AvxLut4x3Factory>();
+            assert_float_lut_range::<f64, AvxLut3x3Factory, AvxLut4x3Factory>();
         }
     }
 }

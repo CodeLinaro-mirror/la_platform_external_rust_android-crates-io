@@ -28,9 +28,10 @@
  */
 use crate::conversions::*;
 use crate::err::CmsError;
+use crate::helpers::boxed_array;
 use crate::interceptors::{FromCmykaInterceptor, ToCmykaInterceptor};
 use crate::trc::GammaLutInterpolate;
-use crate::{ColorProfile, DataColorSpace, LutWarehouse, RenderingIntent, Vector3f, Xyzd};
+use crate::{ColorProfile, DataColorSpace, LutType, LutWarehouse, RenderingIntent, Vector3f, Xyzd};
 use num_traits::AsPrimitive;
 use std::sync::Arc;
 
@@ -86,6 +87,8 @@ pub struct TransformOptions {
     ///
     /// Q2.13 for RGB->XYZ->RGB is used.
     /// LUT interpolation use Q0.15.
+    /// For LUT transforms, this preference applies only to integer samples.
+    /// Floating-point samples always use floating-point grids to preserve their range.
     pub prefer_fixed_point: bool,
     /// Interpolation method for 3D LUT
     ///
@@ -416,7 +419,7 @@ impl ColorProfile {
         if dst_layout == Layout::Cmyka {
             core_dst_layout = Layout::Rgba;
         }
-        let handle = self.create_transform_nbit::<u16, 16, 65536, 65536>(
+        let handle = self.create_transform_nbit::<u16, 16, 65536, 65536, 65536>(
             core_src_layout,
             dst_pr,
             core_dst_layout,
@@ -461,7 +464,7 @@ impl ColorProfile {
         if dst_layout == Layout::Cmyka {
             core_dst_layout = Layout::Rgba;
         }
-        let handle = self.create_transform_nbit::<u16, 12, 65536, 16384>(
+        let handle = self.create_transform_nbit::<u16, 12, 65536, 16384, 4096>(
             core_src_layout,
             dst_pr,
             core_dst_layout,
@@ -506,7 +509,7 @@ impl ColorProfile {
         if dst_layout == Layout::Cmyka {
             core_dst_layout = Layout::Rgba;
         }
-        let handle = self.create_transform_nbit::<u16, 10, 65536, 8192>(
+        let handle = self.create_transform_nbit::<u16, 10, 65536, 8192, 1024>(
             core_src_layout,
             dst_pr,
             core_dst_layout,
@@ -555,7 +558,7 @@ impl ColorProfile {
         if dst_layout == Layout::Cmyka {
             core_dst_layout = Layout::Rgba;
         }
-        let handle = self.create_transform_nbit::<f32, 1, 65536, 32768>(
+        let handle = self.create_transform_nbit::<f32, 1, 65536, 32768, 65536>(
             core_src_layout,
             dst_pr,
             core_dst_layout,
@@ -608,7 +611,7 @@ impl ColorProfile {
         if dst_layout == Layout::Cmyka {
             core_dst_layout = Layout::Rgba;
         }
-        let handle = self.create_transform_nbit::<f64, 1, 65536, 65536>(
+        let handle = self.create_transform_nbit::<f64, 1, 65536, 65536, 65536>(
             core_src_layout,
             dst_pr,
             core_dst_layout,
@@ -780,6 +783,8 @@ impl ColorProfile {
         const BIT_DEPTH: usize,
         const LINEAR_CAP: usize,
         const GAMMA_CAP: usize,
+        // BarycentricWeightScale::High weight table size: one bin per sample value above 8 bits.
+        const BINS: usize,
     >(
         &self,
         src_layout: Layout,
@@ -809,7 +814,7 @@ impl ColorProfile {
 
             #[cfg(feature = "lut")]
             if self.has_device_to_pcs_lut() || dst_pr.has_pcs_to_device_lut() {
-                return make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP>(
+                return make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP, BINS>(
                     src_layout, self, dst_layout, dst_pr, options,
                 );
             }
@@ -939,7 +944,7 @@ impl ColorProfile {
 
             #[cfg(feature = "lut")]
             if self.has_device_to_pcs_lut() || dst_pr.has_pcs_to_device_lut() {
-                return make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP>(
+                return make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP, BINS>(
                     src_layout, self, dst_layout, dst_pr, options,
                 );
             }
@@ -1049,7 +1054,7 @@ impl ColorProfile {
                         options.allow_use_cicp_transfer,
                     )?;
 
-                    let mut gray_linear2 = Box::new([0f32; 65536]);
+                    let mut gray_linear2 = boxed_array::<f32, 65536>(0.);
                     for (dst, src) in gray_linear2.iter_mut().zip(gray_linear.iter()) {
                         *dst = *src;
                     }
@@ -1080,7 +1085,7 @@ impl ColorProfile {
 
             #[cfg(feature = "lut")]
             if self.has_device_to_pcs_lut() || dst_pr.has_pcs_to_device_lut() {
-                return make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP>(
+                return make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP, BINS>(
                     src_layout, self, dst_layout, dst_pr, options,
                 );
             }
@@ -1149,7 +1154,7 @@ impl ColorProfile {
                 if dst_layout == Layout::Gray || dst_layout == Layout::GrayAlpha {
                     return Err(CmsError::InvalidLayout);
                 }
-                make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP>(
+                make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP, BINS>(
                     src_layout, self, dst_layout, dst_pr, options,
                 )
             }
@@ -1160,7 +1165,7 @@ impl ColorProfile {
         } else {
             #[cfg(feature = "lut")]
             {
-                make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP>(
+                make_lut_transform::<T, BIT_DEPTH, LINEAR_CAP, GAMMA_CAP, BINS>(
                     src_layout, self, dst_layout, dst_pr, options,
                 )
             }
@@ -1180,7 +1185,14 @@ impl ColorProfile {
         dst_layout: Layout,
         options: TransformOptions,
     ) -> Result<Arc<Transform8BitExecutor>, CmsError> {
-        self.create_transform_nbit::<u8, 8, 256, 4096>(src_layout, dst_pr, dst_layout, options)
+        // Low's 256-entry table already has one weight bin per 8-bit sample value.
+        let options = TransformOptions {
+            barycentric_weight_scale: BarycentricWeightScale::Low,
+            ..options
+        };
+        self.create_transform_nbit::<u8, 8, 256, 4096, 65536>(
+            src_layout, dst_pr, dst_layout, options,
+        )
     }
 
     /// Creates transform between source and destination profile
@@ -1198,22 +1210,44 @@ impl ColorProfile {
 
     #[allow(unused)]
     pub(crate) fn get_device_to_pcs(&self, intent: RenderingIntent) -> Option<&LutWarehouse> {
-        match intent {
+        let lut = match intent {
             RenderingIntent::AbsoluteColorimetric => self.lut_a_to_b_colorimetric.as_ref(),
             RenderingIntent::Saturation => self.lut_a_to_b_saturation.as_ref(),
             RenderingIntent::RelativeColorimetric => self.lut_a_to_b_colorimetric.as_ref(),
             RenderingIntent::Perceptual => self.lut_a_to_b_perceptual.as_ref(),
-        }
+        };
+        // ICC.1:2022 8.10.2 c): use AToB0 when the intent has no tag of its own
+        lut.or(self.lut_a_to_b_perceptual.as_ref())
     }
 
     #[allow(unused)]
     pub(crate) fn get_pcs_to_device(&self, intent: RenderingIntent) -> Option<&LutWarehouse> {
-        match intent {
+        let lut = match intent {
             RenderingIntent::AbsoluteColorimetric => self.lut_b_to_a_colorimetric.as_ref(),
             RenderingIntent::Saturation => self.lut_b_to_a_saturation.as_ref(),
             RenderingIntent::RelativeColorimetric => self.lut_b_to_a_colorimetric.as_ref(),
             RenderingIntent::Perceptual => self.lut_b_to_a_perceptual.as_ref(),
-        }
+        };
+        // ICC.1:2022 8.10.2 c): use BToA0 when the intent has no tag of its own
+        lut.or(self.lut_b_to_a_perceptual.as_ref())
+    }
+
+    /// Only a lut16Type table encodes Lab the legacy v2 way, in v2 and v4 profiles alike; lut8Type
+    /// and lutAtoBType/lutBtoAType encode it as v4 does (ICC.1 §10.8).
+    #[allow(unused)]
+    pub(crate) fn device_to_pcs_is_lut16(&self, intent: RenderingIntent) -> bool {
+        matches!(
+            self.get_device_to_pcs(intent),
+            Some(LutWarehouse::Lut(lut)) if lut.lut_type == LutType::Lut16
+        )
+    }
+
+    #[allow(unused)]
+    pub(crate) fn pcs_to_device_is_lut16(&self, intent: RenderingIntent) -> bool {
+        matches!(
+            self.get_pcs_to_device(intent),
+            Some(LutWarehouse::Lut(lut)) if lut.lut_type == LutType::Lut16
+        )
     }
 }
 
@@ -1274,6 +1308,99 @@ mod tests {
             )
             .unwrap();
         transform.transform(&src, &mut dst).unwrap();
+    }
+
+    #[cfg(feature = "lut")]
+    #[test]
+    fn test_colorimetric_intent_falls_back_to_perceptual_lut() {
+        // Without A2B1/B2A1, relative colorimetric uses A2B0/B2A0 as if they were also
+        // listed as A2B1/B2A1, without the black point compensation of perceptual intent.
+        let icc = std::fs::read("./assets/srgb_perceptual.icc").unwrap();
+        let mut perceptual_only = ColorProfile::new_from_slice(&icc).unwrap();
+        perceptual_only.lut_a_to_b_colorimetric = None;
+        perceptual_only.lut_b_to_a_colorimetric = None;
+        let mut aliased = perceptual_only.clone();
+        aliased.lut_a_to_b_colorimetric = aliased.lut_a_to_b_perceptual.clone();
+        aliased.lut_b_to_a_colorimetric = aliased.lut_b_to_a_perceptual.clone();
+
+        let srgb = ColorProfile::new_srgb();
+        let options = TransformOptions {
+            rendering_intent: RenderingIntent::RelativeColorimetric,
+            ..Default::default()
+        };
+        let src: Vec<u8> = (0..=255u8).flat_map(|v| [v, v / 2, 255 - v]).collect();
+        let run = |from: &ColorProfile, to: &ColorProfile| {
+            let transform = from
+                .create_transform_8bit(Layout::Rgb, to, Layout::Rgb, options)
+                .unwrap();
+            let mut dst = vec![0u8; src.len()];
+            transform.transform(&src, &mut dst).unwrap();
+            dst
+        };
+        assert_eq!(run(&perceptual_only, &srgb), run(&aliased, &srgb));
+        assert_eq!(run(&srgb, &perceptual_only), run(&srgb, &aliased));
+    }
+
+    #[cfg(feature = "options")]
+    #[test]
+    fn test_high_weights_lut_u16_matches_f32() {
+        // High weights give every 10-, 12- and 16-bit sample value its own bin, so these transforms
+        // follow the f32 one up to their gamma tables and rounding (Low's 8-bit cut is off by 0.008).
+        // A LUT-based source profile (Lab PCS, A2B0 as lutAtoBType), so the 3D LUT executors run.
+        let Ok(icc) = std::fs::read("./assets/srgb_perceptual.icc") else {
+            return;
+        };
+        let src_profile = ColorProfile::new_from_slice(&icc).unwrap();
+        let dst_profile = ColorProfile::new_srgb();
+        for prefer_fixed_point in [false, true] {
+            let options = TransformOptions {
+                barycentric_weight_scale: BarycentricWeightScale::High,
+                prefer_fixed_point,
+                ..TransformOptions::default()
+            };
+            let reference = src_profile
+                .create_transform_f32(Layout::Rgb, &dst_profile, Layout::Rgb, options)
+                .unwrap();
+            for (bit_depth, create) in [
+                (
+                    10,
+                    ColorProfile::create_transform_10bit as fn(_, _, _, _, _) -> _,
+                ),
+                (12, ColorProfile::create_transform_12bit),
+                (16, ColorProfile::create_transform_16bit),
+            ] {
+                let transform = create(
+                    &src_profile,
+                    Layout::Rgb,
+                    &dst_profile,
+                    Layout::Rgb,
+                    options,
+                )
+                .unwrap();
+                let max = ((1u32 << bit_depth) - 1) as f32;
+                // A neutral ramp and a warm ramp through every 12-bit code.
+                let src: Vec<u16> = (0..4096u32)
+                    .flat_map(|i| {
+                        let v = i as f32 / 4095.;
+                        [v, v, v, v, v * 0.95, v * 0.9]
+                    })
+                    .map(|v| (v * max).round() as u16)
+                    .collect();
+                let src_f: Vec<f32> = src.iter().map(|&v| v as f32 / max).collect();
+                let mut dst = vec![0u16; src.len()];
+                let mut dst_f = vec![0f32; src.len()];
+                transform.transform(&src, &mut dst).unwrap();
+                reference.transform(&src_f, &mut dst_f).unwrap();
+                for (i, (&v, &r)) in dst.iter().zip(dst_f.iter()).enumerate() {
+                    let diff = (v as f32 / max - r.clamp(0., 1.)).abs();
+                    assert!(
+                        diff < 0.004,
+                        "{bit_depth}-bit, fixed point {prefer_fixed_point}: sample {i} is {} vs {r}",
+                        v as f32 / max
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -1607,6 +1734,81 @@ mod tests {
     }
 
     #[test]
+    fn test_transform_pro_photo_gray_f32() {
+        let pro_photo_profile = ColorProfile::new_pro_photo_rgb();
+        let srgb_profile = ColorProfile::new_srgb();
+        let transform = pro_photo_profile
+            .create_transform_f32(
+                Layout::Rgb,
+                &srgb_profile,
+                Layout::Rgb,
+                TransformOptions::default(),
+            )
+            .unwrap();
+        let src = vec![0.64f32; 256 * 3];
+        let mut dst = vec![0f32; 256 * 3];
+        transform.transform(&src, &mut dst).unwrap();
+        for dst in dst.as_chunks::<3>().0 {
+            let diff0 = (dst[0] - dst[1]).abs();
+            let diff2 = (dst[2] - dst[1]).abs();
+            assert!(
+                diff0 < 1e-3 && diff2 < 1e-3,
+                "Gray should stay gray, but it was {dst:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_transform_pro_photo_gray_f64() {
+        let pro_photo_profile = ColorProfile::new_pro_photo_rgb();
+        let srgb_profile = ColorProfile::new_srgb();
+        let transform = pro_photo_profile
+            .create_transform_f64(
+                Layout::Rgb,
+                &srgb_profile,
+                Layout::Rgb,
+                TransformOptions::default(),
+            )
+            .unwrap();
+        let src = vec![0.64f64; 256 * 3];
+        let mut dst = vec![0f64; 256 * 3];
+        transform.transform(&src, &mut dst).unwrap();
+        for dst in dst.as_chunks::<3>().0 {
+            let diff0 = (dst[0] - dst[1]).abs();
+            let diff2 = (dst[2] - dst[1]).abs();
+            assert!(
+                diff0 < 1e-3 && diff2 < 1e-3,
+                "Gray should stay gray, but it was {dst:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_transform_pro_photo_gray_rgb16() {
+        let pro_photo_profile = ColorProfile::new_pro_photo_rgb();
+        let srgb_profile = ColorProfile::new_srgb();
+        let transform = pro_photo_profile
+            .create_transform_16bit(
+                Layout::Rgb,
+                &srgb_profile,
+                Layout::Rgb,
+                TransformOptions::default(),
+            )
+            .unwrap();
+        let src = vec![41943u16; 256 * 3];
+        let mut dst = vec![0u16; 256 * 3];
+        transform.transform(&src, &mut dst).unwrap();
+        for dst in dst.as_chunks::<3>().0 {
+            let diff0 = (dst[0] as i32 - dst[1] as i32).abs();
+            let diff2 = (dst[2] as i32 - dst[1] as i32).abs();
+            assert!(
+                diff0 < 35 && diff2 < 35,
+                "Gray should stay gray, but it was {dst:?}"
+            );
+        }
+    }
+
+    #[test]
     #[cfg(feature = "extended_range")]
     fn test_transform_rgb_to_gray_extended() {
         let srgb = ColorProfile::new_srgb();
@@ -1735,5 +1937,111 @@ mod tests {
                 single
             );
         }
+    }
+
+    #[cfg(feature = "lut")]
+    fn swop() -> ColorProfile {
+        let icc =
+            std::fs::read("./assets/us_swop_coated.icc").expect("us_swop_coated.icc test asset");
+        ColorProfile::new_from_slice(&icc).unwrap()
+    }
+
+    #[cfg(feature = "lut")]
+    #[test]
+    fn lut16_lab_tables_use_the_v2_encoding_in_v4_profiles_too() {
+        let v2 = swop();
+        let mut v4 = v2.clone();
+        v4.version_internal = ProfileVersion::V4_3;
+        let srgb = ColorProfile::new_srgb();
+        let src: Vec<u8> = (0..4096u32)
+            .flat_map(|i| i.wrapping_mul(2654435761).to_le_bytes())
+            .collect();
+        for intent in [
+            RenderingIntent::Perceptual,
+            RenderingIntent::RelativeColorimetric,
+        ] {
+            let options = TransformOptions {
+                rendering_intent: intent,
+                ..TransformOptions::default()
+            };
+            let mut want = vec![0u8; src.len() / 4 * 3];
+            let mut got = vec![0u8; src.len() / 4 * 3];
+            v2.create_transform_8bit(Layout::Rgba, &srgb, Layout::Rgb, options)
+                .unwrap()
+                .transform(&src, &mut want)
+                .unwrap();
+            v4.create_transform_8bit(Layout::Rgba, &srgb, Layout::Rgb, options)
+                .unwrap()
+                .transform(&src, &mut got)
+                .unwrap();
+            assert_eq!(want, got, "{intent:?}");
+        }
+    }
+
+    #[cfg(feature = "lut")]
+    #[test]
+    fn cmyk_to_a_lab_pcs_destination_of_four_outputs_is_refused() {
+        let cmyk = swop();
+        // SWOP's B2A tables are Lab to 4 inks, which no 3-channel destination can use.
+        let mut dest = cmyk.clone();
+        dest.color_space = DataColorSpace::Rgb;
+        let made = cmyk.create_transform_8bit(
+            Layout::Rgba,
+            &dest,
+            Layout::Rgb,
+            TransformOptions::default(),
+        );
+        assert!(matches!(made, Err(CmsError::UnsupportedProfileConnection)));
+    }
+
+    /// Transforms must build on small thread stacks, such as the 256 KiB of a 32-bit IIS
+    /// worker thread: a stack overflow aborts the whole process.
+    #[test]
+    fn transforms_build_on_a_256_kib_thread_stack() {
+        let srgb = ColorProfile::new_srgb();
+        let p3 = ColorProfile::new_display_p3();
+        let gray = ColorProfile::new_gray_with_gamma(2.2);
+        #[cfg(feature = "lut")]
+        let cmyk = swop();
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || {
+                let scales = [
+                    BarycentricWeightScale::Low,
+                    #[cfg(feature = "options")]
+                    BarycentricWeightScale::High,
+                ];
+                for barycentric_weight_scale in scales {
+                    let options = TransformOptions {
+                        barycentric_weight_scale,
+                        ..TransformOptions::default()
+                    };
+                    let rgba = Layout::Rgba;
+                    p3.create_transform_8bit(rgba, &srgb, rgba, options)
+                        .unwrap();
+                    p3.create_transform_10bit(rgba, &srgb, rgba, options)
+                        .unwrap();
+                    p3.create_transform_12bit(rgba, &srgb, rgba, options)
+                        .unwrap();
+                    p3.create_transform_16bit(rgba, &srgb, rgba, options)
+                        .unwrap();
+                    p3.create_transform_f32(rgba, &srgb, rgba, options).unwrap();
+                    p3.create_transform_f64(rgba, &srgb, rgba, options).unwrap();
+                    gray.create_transform_8bit(Layout::Gray, &srgb, rgba, options)
+                        .unwrap();
+                    gray.create_transform_16bit(Layout::Gray, &srgb, rgba, options)
+                        .unwrap();
+                    #[cfg(feature = "lut")]
+                    {
+                        cmyk.create_transform_8bit(rgba, &srgb, rgba, options)
+                            .unwrap();
+                        cmyk.create_transform_16bit(rgba, &srgb, rgba, options)
+                            .unwrap();
+                    }
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

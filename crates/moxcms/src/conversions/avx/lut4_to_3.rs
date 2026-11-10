@@ -33,7 +33,7 @@ use crate::conversions::avx::interpolator::*;
 use crate::conversions::avx::interpolator_q0_15::AvxAlignedI16;
 use crate::conversions::avx::lut4_to_3_q0_15::TransformLut4To3AvxQ0_15;
 use crate::conversions::interpolator::BarycentricWeight;
-use crate::conversions::lut_transforms::Lut4x3Factory;
+use crate::conversions::lut_transforms::{Grid4x3, Lut4x3Factory};
 use crate::transform::PointeeSizeExpressible;
 use crate::{
     BarycentricWeightScale, CmsError, DataColorSpace, InterpolationMethod, Layout,
@@ -81,7 +81,7 @@ where
         &self,
         src: &[T],
         dst: &mut [T],
-        interpolator: Box<dyn AvxMdInterpolationDouble<BINS, U> + Send + Sync>,
+        interpolator: impl AvxMdInterpolationDouble<BINS, U>,
     ) {
         let cn = Layout::from(LAYOUT);
         let channels = cn.channels();
@@ -188,39 +188,23 @@ where
                 || (self.is_linear && self.color_space == DataColorSpace::Rgb)
                 || self.color_space == DataColorSpace::Xyz
             {
-                self.transform_chunk(src, dst, Box::new(TrilinearAvxFmaDouble::<GRID_SIZE> {}));
+                self.transform_chunk(src, dst, TrilinearAvxFmaDouble::<GRID_SIZE> {});
             } else {
                 match self.interpolation_method {
                     #[cfg(feature = "options")]
                     InterpolationMethod::Tetrahedral => {
-                        self.transform_chunk(
-                            src,
-                            dst,
-                            Box::new(TetrahedralAvxFmaDouble::<GRID_SIZE> {}),
-                        );
+                        self.transform_chunk(src, dst, TetrahedralAvxFmaDouble::<GRID_SIZE> {});
                     }
                     #[cfg(feature = "options")]
                     InterpolationMethod::Pyramid => {
-                        self.transform_chunk(
-                            src,
-                            dst,
-                            Box::new(PyramidAvxFmaDouble::<GRID_SIZE> {}),
-                        );
+                        self.transform_chunk(src, dst, PyramidAvxFmaDouble::<GRID_SIZE> {});
                     }
                     #[cfg(feature = "options")]
                     InterpolationMethod::Prism => {
-                        self.transform_chunk(
-                            src,
-                            dst,
-                            Box::new(PrismaticAvxFmaDouble::<GRID_SIZE> {}),
-                        );
+                        self.transform_chunk(src, dst, PrismaticAvxFmaDouble::<GRID_SIZE> {});
                     }
                     InterpolationMethod::Linear => {
-                        self.transform_chunk(
-                            src,
-                            dst,
-                            Box::new(TrilinearAvxFmaDouble::<GRID_SIZE> {}),
-                        );
+                        self.transform_chunk(src, dst, TrilinearAvxFmaDouble::<GRID_SIZE> {});
                     }
                 }
             }
@@ -238,38 +222,30 @@ impl Lut4x3Factory for AvxLut4x3Factory {
         const LAYOUT: u8,
         const GRID_SIZE: usize,
         const BIT_DEPTH: usize,
+        const BINS: usize,
     >(
-        lut: Vec<f32>,
+        lut: Grid4x3<'_>,
         options: TransformOptions,
         color_space: DataColorSpace,
         is_linear: bool,
-    ) -> Arc<dyn TransformExecutor<T> + Send + Sync>
+    ) -> Result<Arc<dyn TransformExecutor<T> + Send + Sync>, CmsError>
     where
         f32: AsPrimitive<T>,
         u32: AsPrimitive<T>,
         (): LutBarycentricReduction<T, u8>,
         (): LutBarycentricReduction<T, u16>,
     {
-        if options.prefer_fixed_point && BIT_DEPTH < 16 {
-            let q: f32 = if T::FINITE {
-                ((1i32 << BIT_DEPTH as i32) - 1) as f32
-            } else {
-                ((1i32 << 14i32) - 1) as f32
-            };
-            let lut = lut
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .map(|x| {
-                    AvxAlignedI16([
-                        (x[0] * q).round() as i16,
-                        (x[1] * q).round() as i16,
-                        (x[2] * q).round() as i16,
-                        0,
-                    ])
-                })
-                .collect::<Vec<_>>();
-            return match options.barycentric_weight_scale {
+        if T::FINITE && options.prefer_fixed_point && BIT_DEPTH < 16 {
+            let q = ((1i32 << BIT_DEPTH) - 1) as f32;
+            let lut = lut.collect(|x| {
+                AvxAlignedI16([
+                    (x[0] * q).round() as i16,
+                    (x[1] * q).round() as i16,
+                    (x[2] * q).round() as i16,
+                    0,
+                ])
+            })?;
+            return Ok(match options.barycentric_weight_scale {
                 BarycentricWeightScale::Low => {
                     let bins = BarycentricWeight::<i16>::create_ranged_256::<GRID_SIZE>();
                     assert_barycentric_lut_size_precondition::<i16, GRID_SIZE>(bins.as_slice());
@@ -293,7 +269,7 @@ impl Lut4x3Factory for AvxLut4x3Factory {
                 }
                 #[cfg(feature = "options")]
                 BarycentricWeightScale::High => {
-                    let bins = BarycentricWeight::<i16>::create_binned::<GRID_SIZE, 65536>();
+                    let bins = BarycentricWeight::<i16>::create_binned::<GRID_SIZE, BINS>();
                     assert_barycentric_lut_size_precondition::<i16, GRID_SIZE>(bins.as_slice());
                     Arc::new(TransformLut4To3AvxQ0_15::<
                         T,
@@ -301,8 +277,8 @@ impl Lut4x3Factory for AvxLut4x3Factory {
                         LAYOUT,
                         GRID_SIZE,
                         BIT_DEPTH,
-                        65536,
-                        65536,
+                        BINS,
+                        BINS,
                     > {
                         lut,
                         interpolation_method: options.interpolation_method,
@@ -313,19 +289,14 @@ impl Lut4x3Factory for AvxLut4x3Factory {
                         is_linear,
                     })
                 }
-            };
+            });
         }
         assert!(
             std::arch::is_x86_feature_detected!("fma"),
             "Internal configuration error, this feature might not be called without `fma` feature"
         );
-        let lut = lut
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|x| SseAlignedF32([x[0], x[1], x[2], 0f32]))
-            .collect::<Vec<_>>();
-        match options.barycentric_weight_scale {
+        let lut = lut.collect(|x| SseAlignedF32([x[0], x[1], x[2], 0f32]))?;
+        Ok(match options.barycentric_weight_scale {
             BarycentricWeightScale::Low => {
                 let bins = BarycentricWeight::<f32>::create_ranged_256::<GRID_SIZE>();
                 assert_barycentric_lut_size_precondition::<f32, GRID_SIZE>(bins.as_slice());
@@ -343,10 +314,10 @@ impl Lut4x3Factory for AvxLut4x3Factory {
             }
             #[cfg(feature = "options")]
             BarycentricWeightScale::High => {
-                let bins = BarycentricWeight::<f32>::create_binned::<GRID_SIZE, 65536>();
+                let bins = BarycentricWeight::<f32>::create_binned::<GRID_SIZE, BINS>();
                 assert_barycentric_lut_size_precondition::<f32, GRID_SIZE>(bins.as_slice());
                 Arc::new(
-                    TransformLut4To3Avx::<T, u16, LAYOUT, GRID_SIZE, BIT_DEPTH, 65536, 65536> {
+                    TransformLut4To3Avx::<T, u16, LAYOUT, GRID_SIZE, BIT_DEPTH, BINS, BINS> {
                         lut,
                         interpolation_method: options.interpolation_method,
                         weights: bins,
@@ -357,6 +328,6 @@ impl Lut4x3Factory for AvxLut4x3Factory {
                     },
                 )
             }
-        }
+        })
     }
 }
