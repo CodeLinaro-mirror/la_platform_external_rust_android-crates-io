@@ -1,17 +1,17 @@
 name: "winnow"
 description: "A byte-oriented, zero-copy, parser combinators library"
 third_party {
-  version: "1.0.4"
+  version: "1.0.5"
   license_type: NOTICE
   last_upgrade_date {
     year: 2026
-    month: 7
-    day: 15
+    month: 11
+    day: 6
   }
   homepage: "https://crates.io/crates/winnow"
   identifier {
     type: "crates.io"
     value: "winnow"
-    version: "1.0.4"
+    version: "1.0.5"
   }
 }
