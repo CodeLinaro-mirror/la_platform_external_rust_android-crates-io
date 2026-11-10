@@ -18,7 +18,7 @@ rust_test {
     host_supported: true,
     crate_name: "tests",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.5.7",
+    cargo_pkg_version: "0.5.9",
     crate_root: "tests/tests.rs",
     test_suites: ["general-tests"],
     auto_gen_config: true,
@@ -41,7 +41,7 @@ rust_library {
     host_supported: true,
     crate_name: "fixedbitset",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.5.7",
+    cargo_pkg_version: "0.5.9",
     crate_root: "src/lib.rs",
     edition: "2021",
     features: [
