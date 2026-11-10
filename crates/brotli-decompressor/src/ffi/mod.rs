@@ -12,6 +12,7 @@ use alloc::{Allocator, SliceWrapper, SliceWrapperMut, StackAllocator, AllocatedS
 use self::interface::{CAllocator, c_void, BrotliDecoderParameter, BrotliDecoderResult, brotli_alloc_func, brotli_free_func, CBrotliMetadataCallback, brotli_decoder_metadata_start_func, brotli_decoder_metadata_chunk_func};
 use ::BrotliResult;
 use ::BrotliDecoderReturnInfo;
+#[cfg(not(feature="std"))]
 use ::brotli_decode;
 pub use ::HuffmanCode;
 pub use super::state::{BrotliDecoderErrorCode, BrotliState};
@@ -100,9 +101,18 @@ fn brotli_new_decompressor_without_custom_alloc(_to_box: BrotliDecoderState) -> 
 }
 
 #[cfg(feature="std")]
+#[inline(always)]
 fn brotli_new_decompressor_without_custom_alloc(to_box: BrotliDecoderState) -> *mut BrotliDecoderState{
-    alloc_util::Box::<BrotliDecoderState>::into_raw(
-        alloc_util::Box::<BrotliDecoderState>::new(to_box))
+    // Box::new would abort if this fails.  Returning null drops to_box, which
+    // releases the tables it already holds.  A Vec of exactly one element has
+    // the layout of a Box of it, which Box::from_raw in
+    // BrotliDecoderDestroyInstance frees.
+    let mut state = std::vec::Vec::<BrotliDecoderState>::new();
+    if state.try_reserve_exact(1).is_err() {
+        return core::ptr::null_mut();
+    }
+    state.push(to_box);
+    alloc_util::Box::into_raw(state.into_boxed_slice()) as *mut BrotliDecoderState
 }
 
 
@@ -124,32 +134,32 @@ pub unsafe extern fn BrotliDecoderCreateInstance(
         free_func:free_func,
         opaque:opaque,
       };
-      let custom_dictionary = <SubclassableAllocator as Allocator<u8>>::AllocatedMemory::default();
-      let mut decompressor = ::BrotliState::new_with_custom_dictionary(
-        SubclassableAllocator::new(allocators.clone()),
-        SubclassableAllocator::new(allocators.clone()),
-        SubclassableAllocator::new(allocators.clone()),
-        custom_dictionary,
-      );
-      if decompressor.context_map_table.slice().len() == 0 {
-        return core::ptr::null_mut();
-      }
-      decompressor.large_window = false;
-      let to_box = BrotliDecoderState {
-        custom_allocator: allocators.clone(),
-        decompressor: decompressor,
-        metadata_cb: None,
-      };
       if let Some(alloc) = alloc_func {
         let ptr = alloc(allocators.opaque, core::mem::size_of::<BrotliDecoderState>());
         if ptr.is_null() {
             return core::ptr::null_mut();
         }
         let brotli_decoder_state_ptr = core::mem::transmute::<*mut c_void, *mut BrotliDecoderState>(ptr);
-        core::ptr::write(brotli_decoder_state_ptr, to_box);
+        core::ptr::write(brotli_decoder_state_ptr, BrotliDecoderState {
+          custom_allocator: allocators.clone(),
+          decompressor: ::BrotliState::new_strict(
+            SubclassableAllocator::new(allocators.clone()),
+            SubclassableAllocator::new(allocators.clone()),
+            SubclassableAllocator::new(allocators),
+          ),
+          metadata_cb: None,
+        });
         brotli_decoder_state_ptr
       } else {
-        brotli_new_decompressor_without_custom_alloc(to_box)
+        brotli_new_decompressor_without_custom_alloc(BrotliDecoderState {
+          custom_allocator: allocators.clone(),
+          decompressor: ::BrotliState::new_strict(
+            SubclassableAllocator::new(allocators.clone()),
+            SubclassableAllocator::new(allocators.clone()),
+            SubclassableAllocator::new(allocators),
+          ),
+          metadata_cb: None,
+        })
       }
     }) {
         Ok(ret) => ret,
@@ -259,6 +269,21 @@ unsafe fn brotli_decoder_decompress_with_return_info(
     Some(output_scratch) => output_scratch,
     None => return invalid_argument_return_info(),
   };
+  // Without C allocator callbacks, as in BrotliDecoderCreateInstance, so that
+  // a failed allocation is a decoder error rather than an abort.  That
+  // allocator zero-fills and then default-fills each buffer; the second pass
+  // folds away when the optimizer can see the allocator, as under LTO (see
+  // alloc_util::try_alloc_default_slice).
+  #[cfg(feature="std")]
+  {
+    let allocator = || SubclassableAllocator::new(CAllocator {
+      alloc_func: None,
+      free_func: None,
+      opaque: core::ptr::null_mut(),
+    });
+    ::brotli_decode_with_allocators(input, output_scratch, allocator(), allocator(), allocator())
+  }
+  #[cfg(not(feature="std"))]
   ::brotli_decode(input, output_scratch)
 }
 
@@ -561,14 +586,13 @@ pub unsafe extern fn BrotliDecoderDestroyInstance(state_ptr: *mut BrotliDecoderS
         return;
     }
     if (*state_ptr).custom_allocator.alloc_func.is_some() {
-        // Capture the deallocator before ptr::read moves the state out: reading
-        // it back through state_ptr afterwards would touch logically
-        // uninitialized memory. Drop the moved state first so the child
-        // allocations are released before the block holding the state itself.
+        // Capture the deallocator before `drop_in_place` runs: reading it back
+        // through `state_ptr` afterwards would touch logically dropped memory.
+        // Drop the state in place first so the child allocations are released
+        // before the block holding the state itself.
         let free_fn = (*state_ptr).custom_allocator.free_func;
         let opaque = (*state_ptr).custom_allocator.opaque;
-        let to_free = core::ptr::read(state_ptr);
-        core::mem::drop(to_free);
+        core::ptr::drop_in_place(state_ptr);
         if let Some(free_fn) = free_fn {
             free_fn(opaque, state_ptr as *mut c_void);
         }
@@ -788,12 +812,16 @@ mod tests {
   #[cfg(all(feature="std", not(feature="pass-through-ffi-panics"), panic="unwind"))]
   #[test]
   fn prealloc_catches_scratch_exhaustion() {
+    // Decoding needs tree groups and a ring buffer, which the empty scratch
+    // buffers cannot provide.
+    let input = include_bytes!("../../testdata/alice29.txt.compressed");
+    let mut output = [0u8; 256];
     let ret = unsafe {
       BrotliDecoderDecompressPrealloc(
-        0,
-        core::ptr::null(),
-        0,
-        core::ptr::null_mut(),
+        input.len(),
+        input.as_ptr(),
+        output.len(),
+        output.as_mut_ptr(),
         0,
         core::ptr::null_mut(),
         0,
