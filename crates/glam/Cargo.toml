@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.85.0"
 name = "glam"
-version = "0.34.2"
+version = "0.34.3"
 build = false
 include = [
     "/src/**/*.rs",
@@ -155,8 +155,8 @@ name = "quat"
 path = "tests/quat.rs"
 
 [[test]]
-name = "scalar_math_signed_zero"
-path = "tests/scalar_math_signed_zero.rs"
+name = "signed_zero"
+path = "tests/signed_zero.rs"
 
 [[test]]
 name = "support"
