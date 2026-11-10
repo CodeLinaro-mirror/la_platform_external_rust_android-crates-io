@@ -55,6 +55,13 @@
       "generate_rulesmk": true
     }
   ],
+  "package": {
+    "zerocopy": {
+      "target_windows": true
+    }
+  },
+  "ramdisk_available": true,
   "recovery_available": true,
+  "vendor_ramdisk_available": true,
   "min_sdk_version": "29"
 }
