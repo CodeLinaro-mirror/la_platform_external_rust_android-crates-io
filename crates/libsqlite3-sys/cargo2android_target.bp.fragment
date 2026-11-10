@@ -1,2 +1,9 @@
 srcs: [":libsqlite3_bindgen"],
-shared_libs: ["libsqlite"]
+static_libs: select(soong_config_variable("sqlite", "no_icu"), {
+    true: ["libsqlite_static_noicu"],
+    default: [],
+}),
+shared_libs: select(soong_config_variable("sqlite", "no_icu"), {
+    true: ["liblog"],
+    default: ["libsqlite"],
+})
