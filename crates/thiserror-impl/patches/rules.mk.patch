@@ -6,6 +6,6 @@ index 8299639a4..ea15232fa 100644
  	$(call FIND_CRATE,quote) \
  	$(call FIND_CRATE,syn)
  
-+MODULE_RUST_ENV += CARGO_PKG_VERSION_PATCH=18
++MODULE_RUST_ENV += CARGO_PKG_VERSION_PATCH=21
 +
  include make/library.mk
