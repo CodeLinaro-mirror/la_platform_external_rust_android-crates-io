@@ -17,7 +17,7 @@ rust_proc_macro {
     name: "libthiserror_impl",
     crate_name: "thiserror_impl",
     cargo_env_compat: true,
-    cargo_pkg_version: "2.0.18",
+    cargo_pkg_version: "2.0.21",
     crate_root: "src/lib.rs",
     edition: "2021",
     rustlibs: [

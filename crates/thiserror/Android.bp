@@ -26,7 +26,7 @@ rust_library {
     host_supported: true,
     crate_name: "thiserror",
     cargo_env_compat: true,
-    cargo_pkg_version: "2.0.18",
+    cargo_pkg_version: "2.0.21",
     crate_root: "src/lib.rs",
     srcs: [":copy_thiserror_build_out"],
     edition: "2021",

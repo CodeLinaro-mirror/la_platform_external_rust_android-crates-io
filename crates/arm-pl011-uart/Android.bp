@@ -18,7 +18,7 @@ rust_library_rlib {
     defaults: ["rust_baremetal_defaults"],
     crate_name: "arm_pl011_uart",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.5.0",
+    cargo_pkg_version: "0.5.1",
     crate_root: "src/lib.rs",
     edition: "2024",
     rustlibs: [
