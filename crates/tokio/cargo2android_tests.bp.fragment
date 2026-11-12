@@ -32,6 +32,7 @@ rust_defaults {
         "libnum_cpus",
         "libpin_project_lite",
         "librand",
+        "libtempfile",
         "libtokio",
         "libtokio_stream",
         "libtokio_test",

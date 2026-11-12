@@ -1,6 +1,6 @@
 #![cfg(feature = "sync")]
 
-#[cfg(all(target_family = "wasm", not(target_os = "wasi")))]
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
 use std::sync::Arc;
@@ -72,6 +72,108 @@ fn add_permits_closed() {
             assert_eq!(sem.available_permits(), size + add);
             assert!(sem.is_closed());
         }
+    }
+}
+
+#[test]
+fn close_drops_wakers_outside_lock() {
+    use futures::task::{waker, ArcWake};
+    use std::future::Future;
+    use std::task::Context;
+    use tokio::sync::OwnedSemaphorePermit;
+
+    struct ReleaseOnDrop {
+        _permit: OwnedSemaphorePermit,
+    }
+
+    impl ArcWake for ReleaseOnDrop {
+        fn wake_by_ref(_arc_self: &Arc<Self>) {}
+    }
+
+    let sem = Arc::new(Semaphore::new(1));
+
+    let mut fut = Box::pin(async {
+        let _ = sem.acquire().await;
+    });
+
+    let waker = waker(Arc::new(ReleaseOnDrop {
+        _permit: sem.clone().try_acquire_owned().unwrap(),
+    }));
+    let mut cx = Context::from_waker(&waker);
+    assert!(fut.as_mut().poll(&mut cx).is_pending());
+    drop(waker);
+
+    // Waking the waiter drops the last reference to the waker, which releases
+    // a permit. This shouldn't deadlock.
+    sem.close();
+    assert_eq!(sem.available_permits(), 1);
+}
+
+#[test]
+fn close_wakes_waiters_outside_lock() {
+    use futures::task::{waker, ArcWake};
+    use std::future::Future;
+    use std::task::Context;
+
+    struct ReleaseOnWake(Arc<Semaphore>);
+
+    impl ArcWake for ReleaseOnWake {
+        fn wake_by_ref(arc_self: &Arc<Self>) {
+            arc_self.0.add_permits(1);
+        }
+    }
+
+    let sem = Arc::new(Semaphore::new(0));
+
+    let mut fut = Box::pin(async {
+        let _ = sem.acquire().await;
+    });
+
+    let waker = waker(Arc::new(ReleaseOnWake(sem.clone())));
+    let mut cx = Context::from_waker(&waker);
+    assert!(fut.as_mut().poll(&mut cx).is_pending());
+
+    // The waker releases a permit when it is woken. This shouldn't deadlock.
+    sem.close();
+    assert_eq!(sem.available_permits(), 1);
+}
+
+#[test]
+fn close_wakes_all_waiters() {
+    use futures::task::{waker, ArcWake};
+    use std::future::Future;
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    use std::task::{Context, Poll};
+
+    // More waiters than are woken in one batch.
+    const WAITERS: usize = 100;
+
+    struct CountWakes(AtomicUsize);
+
+    impl ArcWake for CountWakes {
+        fn wake_by_ref(arc_self: &Arc<Self>) {
+            arc_self.0.fetch_add(1, SeqCst);
+        }
+    }
+
+    let sem = Semaphore::new(0);
+    let wakes = Arc::new(CountWakes(AtomicUsize::new(0)));
+    let waker = waker(wakes.clone());
+    let mut cx = Context::from_waker(&waker);
+
+    let mut acquires: Vec<_> = (0..WAITERS).map(|_| Box::pin(sem.acquire())).collect();
+    for acquire in &mut acquires {
+        assert!(acquire.as_mut().poll(&mut cx).is_pending());
+    }
+
+    sem.close();
+    assert_eq!(wakes.0.load(SeqCst), WAITERS);
+
+    for acquire in &mut acquires {
+        assert!(matches!(
+            acquire.as_mut().poll(&mut cx),
+            Poll::Ready(Err(_))
+        ));
     }
 }
 
@@ -168,6 +270,14 @@ fn split() {
     assert_eq!(sem.available_permits(), 5);
 }
 
+#[test]
+fn permit_semaphore() {
+    let sem = Semaphore::new(1);
+    let permit = sem.try_acquire().unwrap();
+
+    assert!(std::ptr::eq(permit.semaphore(), &sem));
+}
+
 #[tokio::test]
 #[cfg(feature = "full")]
 async fn stress_test() {
@@ -243,4 +353,120 @@ fn no_panic_at_maxpermits() {
     let _ = Semaphore::new(Semaphore::MAX_PERMITS);
     let s = Semaphore::new(Semaphore::MAX_PERMITS - 1);
     s.add_permits(1);
+}
+
+#[test]
+fn blocking_acquire() {
+    let sem = Semaphore::new(1);
+    let permit = sem.blocking_acquire().unwrap();
+    assert_eq!(sem.available_permits(), 0);
+    drop(permit);
+    assert_eq!(sem.available_permits(), 1);
+}
+
+#[test]
+#[cfg(not(target_family = "wasm"))] // spawns a thread, which wasm doesn't support
+fn blocking_acquire_waits_for_permit() {
+    let sem = Arc::new(Semaphore::new(0));
+
+    let sem2 = sem.clone();
+    let handle = std::thread::spawn(move || {
+        // Blocks until a permit becomes available.
+        let _permit = sem2.blocking_acquire().unwrap();
+    });
+
+    sem.add_permits(1);
+
+    handle.join().unwrap();
+}
+
+#[test]
+fn blocking_acquire_many() {
+    let sem = Semaphore::new(5);
+    let permit = sem.blocking_acquire_many(3).unwrap();
+    assert_eq!(sem.available_permits(), 2);
+    drop(permit);
+    assert_eq!(sem.available_permits(), 5);
+}
+
+#[test]
+fn blocking_acquire_owned() {
+    let sem = Arc::new(Semaphore::new(1));
+    let permit = sem.clone().blocking_acquire_owned().unwrap();
+    assert_eq!(sem.available_permits(), 0);
+    drop(permit);
+    assert_eq!(sem.available_permits(), 1);
+}
+
+#[test]
+fn blocking_acquire_many_owned() {
+    let sem = Arc::new(Semaphore::new(5));
+    let permit = sem.clone().blocking_acquire_many_owned(3).unwrap();
+    assert_eq!(sem.available_permits(), 2);
+    drop(permit);
+    assert_eq!(sem.available_permits(), 5);
+}
+
+#[test]
+fn blocking_acquire_closed() {
+    let sem = Arc::new(Semaphore::new(1));
+    sem.close();
+    assert!(sem.blocking_acquire().is_err());
+    assert!(sem.blocking_acquire_many(2).is_err());
+    assert!(sem.clone().blocking_acquire_owned().is_err());
+    assert!(sem.clone().blocking_acquire_many_owned(2).is_err());
+}
+
+#[tokio::test]
+#[cfg(feature = "full")]
+#[should_panic = "Cannot block the current thread from within a runtime"]
+async fn blocking_acquire_in_async_context() {
+    let sem = Semaphore::new(1);
+    // Calling a blocking method from an async context must panic.
+    let _permit = sem.blocking_acquire();
+}
+
+#[tokio::test]
+#[cfg(feature = "full")]
+#[should_panic = "Cannot block the current thread from within a runtime"]
+async fn blocking_acquire_many_in_async_context() {
+    let sem = Semaphore::new(1);
+    // Calling a blocking method from an async context must panic.
+    let _permit = sem.blocking_acquire_many(1);
+}
+
+#[tokio::test]
+#[cfg(feature = "full")]
+#[should_panic = "Cannot block the current thread from within a runtime"]
+async fn blocking_acquire_owned_in_async_context() {
+    let sem = Arc::new(Semaphore::new(1));
+    // Calling a blocking method from an async context must panic.
+    let _permit = sem.blocking_acquire_owned();
+}
+
+#[tokio::test]
+#[cfg(feature = "full")]
+#[should_panic = "Cannot block the current thread from within a runtime"]
+async fn blocking_acquire_many_owned_in_async_context() {
+    let sem = Arc::new(Semaphore::new(1));
+    // Calling a blocking method from an async context must panic.
+    let _permit = sem.blocking_acquire_many_owned(1);
+}
+
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn merge_many_permits() {
+    let sem = Arc::new(Semaphore::new(6_000_000_000));
+    let mut a = sem.try_acquire_many(3_000_000_000).unwrap();
+    let b = sem.try_acquire_many(3_000_000_000).unwrap();
+    assert_eq!(a.num_permits(), 3_000_000_000);
+    assert_eq!(b.num_permits(), 3_000_000_000);
+    assert_eq!(sem.available_permits(), 0);
+
+    a.merge(b);
+    assert_eq!(a.num_permits(), 6_000_000_000);
+    assert_eq!(sem.available_permits(), 0);
+
+    drop(a);
+    assert_eq!(sem.available_permits(), 6_000_000_000);
 }

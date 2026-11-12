@@ -2,12 +2,12 @@
 #![warn(rust_2018_idioms)]
 #![cfg(feature = "sync")]
 
-#[cfg(all(target_family = "wasm", not(target_os = "wasi")))]
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
 use wasm_bindgen_test::wasm_bindgen_test as test;
-#[cfg(all(target_family = "wasm", not(target_os = "wasi")))]
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
 use wasm_bindgen_test::wasm_bindgen_test as maybe_tokio_test;
 
-#[cfg(not(all(target_family = "wasm", not(target_os = "wasi"))))]
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 use tokio::test as maybe_tokio_test;
 
 use std::fmt;
@@ -1010,6 +1010,44 @@ fn dropping_rx_closes_channel_for_try() {
     ));
 
     assert_eq!(1, Arc::strong_count(&msg));
+}
+
+#[test]
+fn dropping_rx_drops_sender_wakers_outside_lock() {
+    use futures::task::{noop_waker_ref, waker, ArcWake};
+    use std::future::Future;
+    use std::task::{Context, Poll};
+
+    struct PermitInWaker {
+        _permit: mpsc::OwnedPermit<i32>,
+    }
+
+    impl ArcWake for PermitInWaker {
+        fn wake_by_ref(_arc_self: &Arc<Self>) {}
+    }
+
+    let (tx, rx) = mpsc::channel(2);
+    let permit = tx.clone().try_reserve_owned().unwrap();
+    tx.try_send(1).unwrap();
+
+    // The channel is full, so `reserve` waits for capacity.
+    let mut reserve = Box::pin(tx.reserve());
+    let waker = waker(Arc::new(PermitInWaker { _permit: permit }));
+    assert!(reserve
+        .as_mut()
+        .poll(&mut Context::from_waker(&waker))
+        .is_pending());
+    drop(waker);
+
+    // Closing the channel wakes `reserve`, which drops the last reference to
+    // the waker and releases the permit inside it. This shouldn't deadlock.
+    drop(rx);
+
+    let mut cx = Context::from_waker(noop_waker_ref());
+    assert!(matches!(
+        reserve.as_mut().poll(&mut cx),
+        Poll::Ready(Err(_))
+    ));
 }
 
 #[test]
