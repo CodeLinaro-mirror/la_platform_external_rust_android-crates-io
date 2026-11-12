@@ -18,7 +18,7 @@ rust_library {
     host_supported: true,
     crate_name: "libsqlite3_sys",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.39.1",
+    cargo_pkg_version: "0.40.0",
     crate_root: "src/lib.rs",
     edition: "2024",
     features: [
@@ -51,7 +51,7 @@ rust_test {
     host_supported: true,
     crate_name: "libsqlite3_sys",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.39.1",
+    cargo_pkg_version: "0.40.0",
     crate_root: "src/lib.rs",
     test_suites: ["general-tests"],
     auto_gen_config: true,
