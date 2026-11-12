@@ -19,7 +19,7 @@ rust_library {
     host_supported: true,
     crate_name: "const_oid",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.10.2",
+    cargo_pkg_version: "0.10.3",
     crate_root: "src/lib.rs",
     edition: "2024",
     features: ["db"],
