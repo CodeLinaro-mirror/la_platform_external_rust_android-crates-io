@@ -1906,6 +1906,7 @@ pub(crate) mod test_helpers {
     }
 
     impl CaptureCommandSink {
+        #[cfg(feature = "type1")]
         pub fn to_svg(&self) -> String {
             use core::fmt::Write;
             let mut buf = String::default();
@@ -2972,6 +2973,32 @@ mod tests {
         assert_eq!(
             eval(&cs).first().cloned(),
             Some(Command::MoveTo(Fixed::from_i32(2), Fixed::from_i32(1)))
+        );
+    }
+
+    #[test]
+    fn roll_by_the_most_negative_shift() {
+        // A Type 1 charstring can push any 32-bit integer, so the shift can
+        // be i32::MIN: 1 2, roll 2 by i32::MIN, a whole number of turns
+        let mut cs = n(1);
+        cs.extend(n(2));
+        cs.extend(n(2));
+        cs.push(255);
+        cs.extend(i32::MIN.to_be_bytes());
+        cs.extend(esc(30));
+        cs.push(21); // rmoveto
+        cs.push(14); // endchar
+        let mut commands = CaptureCommandSink::default();
+        evaluate(
+            &NullContext(CharstringKind::Type1),
+            None,
+            &cs,
+            &mut commands,
+        )
+        .unwrap();
+        assert_eq!(
+            commands.0.first().cloned(),
+            Some(Command::MoveTo(Fixed::from_i32(1), Fixed::from_i32(2)))
         );
     }
 

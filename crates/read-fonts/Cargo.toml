@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.85"
 name = "read-fonts"
-version = "0.46.0"
+version = "0.47.0"
 build = false
 autolib = false
 autobins = false
@@ -36,6 +36,7 @@ features = [
     "libm",
     "serde",
     "std",
+    "type1",
 ]
 
 [features]
@@ -56,6 +57,7 @@ std = [
     "font-types/std",
     "dep:foldhash",
 ]
+type1 = ["agl"]
 
 [lib]
 name = "read_fonts"
@@ -99,6 +101,7 @@ harness = false
 name = "type1"
 path = "benches/type1.rs"
 harness = false
+required-features = ["type1"]
 
 [dependencies.bytemuck]
 version = "1.14.0"
