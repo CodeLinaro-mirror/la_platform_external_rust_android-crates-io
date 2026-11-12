@@ -1,0 +1,21 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -61,6 +61,7 @@
+ ]
+ 
+ [features]
++android = ["dep:bssl-sys"]
+ boringssl-boring-crate = [
+     "boring",
+     "foreign-types-shared",
+@@ -111,6 +112,10 @@
+ version = "4.3"
+ optional = true
+ 
++[dependencies.bssl-sys]
++version = "0.1"
++optional = true
++
+ [dependencies.either]
+ version = "1.8"
+ default-features = false
