@@ -61,7 +61,6 @@ rustdoc-args = [
 ]
 
 [features]
-android = ["dep:bssl-sys"]
 boringssl-boring-crate = [
     "boring",
     "foreign-types-shared",
@@ -110,10 +109,6 @@ path = "examples/server.rs"
 
 [dependencies.boring]
 version = "4.3"
-optional = true
-
-[dependencies.bssl-sys]
-version = "0.1"
 optional = true
 
 [dependencies.either]

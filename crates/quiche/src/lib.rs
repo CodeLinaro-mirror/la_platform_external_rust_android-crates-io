@@ -396,8 +396,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use core::ffi::c_void;
-
 #[cfg(feature = "qlog")]
 use qlog::events::connectivity::ConnectivityEventType;
 #[cfg(feature = "qlog")]
@@ -509,63 +507,6 @@ const TX_CAP_FACTOR: f64 = 1.0;
 // value of 5, the maximum possible value is 2^5 = 32 times the minimum PTO. This
 // prevents arithmetic overflow.
 const MAX_PTO_EXPONENT: u32 = 5;
-
-/// FfiSlice exists to provide `as_ffi_ptr` on slices. Calling `as_ptr` on an
-/// empty Rust slice may return the alignment of the type, rather than NULL, as
-/// the pointer. When passing pointers into C/C++ code, that is not a valid
-/// pointer. Thus this method should be used whenever passing a pointer to a
-/// slice into BoringSSL code.
-pub(crate) trait FfiSlice<T> {
-    fn as_ffi_ptr(&self) -> *const T;
-    fn as_ffi_void_ptr(&self) -> *const c_void {
-        self.as_ffi_ptr() as *const c_void
-    }
-}
-
-impl<T> FfiSlice<T> for [T] {
-    fn as_ffi_ptr(&self) -> *const T {
-        if self.is_empty() {
-            core::ptr::null()
-        } else {
-            self.as_ptr()
-        }
-    }
-}
-
-impl<T, const N: usize> FfiSlice<T> for [T; N] {
-    fn as_ffi_ptr(&self) -> *const T {
-        if N == 0 {
-            core::ptr::null()
-        } else {
-            self.as_ptr()
-        }
-    }
-}
-
-/// See the comment [`FfiSlice`].
-pub(crate) trait FfiMutSlice {
-    fn as_mut_ffi_ptr(&mut self) -> *mut u8;
-}
-
-impl FfiMutSlice for [u8] {
-    fn as_mut_ffi_ptr(&mut self) -> *mut u8 {
-        if self.is_empty() {
-            core::ptr::null_mut()
-        } else {
-            self.as_mut_ptr()
-        }
-    }
-}
-
-impl<const N: usize> FfiMutSlice for [u8; N] {
-    fn as_mut_ffi_ptr(&mut self) -> *mut u8 {
-        if N == 0 {
-            core::ptr::null_mut()
-        } else {
-            self.as_mut_ptr()
-        }
-    }
-}
 
 /// Ancillary information about incoming packets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -698,8 +639,7 @@ impl Config {
     #[cfg(feature = "boringssl-boring-crate")]
     #[cfg_attr(docsrs, doc(cfg(feature = "boringssl-boring-crate")))]
     pub fn with_boring_ssl_ctx_builder(
-        version: u32,
-        tls_ctx_builder: boring::ssl::SslContextBuilder,
+        version: u32, tls_ctx_builder: boring::ssl::SslContextBuilder,
     ) -> Result<Config> {
         Self::with_tls_ctx(version, tls::Context::from_boring(tls_ctx_builder))
     }
@@ -1551,10 +1491,6 @@ where
     /// The anti-amplification limit factor.
     max_amplification_factor: usize,
 }
-
-// SAFETY: Connection is currently thread-safe, however this needs to be reconsidered
-// when the API is expanded.
-unsafe impl Sync for Connection {}
 
 /// Creates a new server-side connection.
 ///
@@ -7085,7 +7021,7 @@ impl<F: BufFactory> Connection<F> {
 
     /// Returns the peer's leaf certificate (if any) as a DER-encoded buffer.
     #[inline]
-    pub fn peer_cert(&self) -> Option<Vec<u8>> {
+    pub fn peer_cert(&self) -> Option<&[u8]> {
         self.handshake.peer_cert()
     }
 
@@ -7096,7 +7032,7 @@ impl<F: BufFactory> Connection<F> {
     /// certificates (if any) are the chain certificate authorities used to
     /// sign the leaf certificate.
     #[inline]
-    pub fn peer_cert_chain(&self) -> Option<Vec<Vec<u8>>> {
+    pub fn peer_cert_chain(&self) -> Option<Vec<&[u8]>> {
         self.handshake.peer_cert_chain()
     }
 
