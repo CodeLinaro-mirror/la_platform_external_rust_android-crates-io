@@ -59,10 +59,6 @@ pub fn rand_u64_uniform(max: u64) -> u64 {
     r / chunk_size
 }
 
-#[cfg(feature = "android")]
-use bssl_sys::RAND_bytes;
-
-#[cfg(not(feature = "android"))]
 extern "C" {
     fn RAND_bytes(buf: *mut u8, len: libc::size_t) -> libc::c_int;
 }
