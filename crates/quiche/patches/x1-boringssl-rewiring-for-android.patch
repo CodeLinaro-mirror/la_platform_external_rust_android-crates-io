@@ -1,0 +1,1231 @@
+diff --git a/src/crypto/android_boringssl.rs b/src/crypto/android_boringssl.rs
+new file mode 100644
+index 0000000..94d4868
+--- /dev/null
++++ b/src/crypto/android_boringssl.rs
+@@ -0,0 +1,364 @@
++#![deny(clippy::undocumented_unsafe_blocks)]
++
++use super::{
++    derive_pkt_iv, derive_pkt_key, make_nonce, Algorithm, Error, FfiMutSlice, FfiSlice,
++    HeaderProtectionMask, Result, HP_MASK_LEN,
++};
++
++use std::convert::TryFrom;
++
++use std::mem::size_of;
++use std::mem::MaybeUninit;
++
++use libc::c_int;
++use libc::c_uint;
++
++use bssl_sys::{
++    AES_ecb_encrypt, AES_set_encrypt_key, CRYPTO_chacha_20, EVP_AEAD_CTX_cleanup,
++    EVP_AEAD_CTX_init, EVP_AEAD_CTX_open, EVP_AEAD_CTX_seal_scatter, EVP_aead_aes_128_gcm_tls13,
++    EVP_aead_aes_256_gcm_tls13, EVP_aead_chacha20_poly1305, HKDF_expand, HKDF_extract, AES_KEY,
++    EVP_AEAD, EVP_AEAD_CTX, EVP_MD,
++};
++
++impl Algorithm {
++    fn get_evp_aead(self) -> *const EVP_AEAD {
++        match self {
++            // SAFETY: FFI call, this function returns a static immutable lifetime object.
++            Algorithm::AES128_GCM => unsafe { EVP_aead_aes_128_gcm_tls13() },
++            // SAFETY: FFI call,this function returns a static immutable lifetime object.
++            Algorithm::AES256_GCM => unsafe { EVP_aead_aes_256_gcm_tls13() },
++            // SAFETY: FFI call, this function returns a static immutable lifetime object.
++            Algorithm::ChaCha20_Poly1305 => unsafe { EVP_aead_chacha20_poly1305() },
++        }
++    }
++}
++
++pub(crate) struct PacketKey {
++    alg: Algorithm,
++
++    ctx: EVP_AEAD_CTX,
++
++    nonce: Vec<u8>,
++}
++
++// SAFETY: the components of the PacketKey are safe to send between threads. Note they are
++// *not* safe to Sync, because the EVP_AEAD_CTX contains non-thread-safe state for TLS support.
++unsafe impl Send for PacketKey {}
++
++impl Drop for PacketKey {
++    fn drop(&mut self) {
++        // Safety: `self.ctx` was initialized by `EVP_AEAD_CTX_init` because all
++        // paths to create a `PacketKey` do so.
++        unsafe {
++            EVP_AEAD_CTX_cleanup(&mut self.ctx);
++        }
++    }
++}
++
++impl PacketKey {
++    pub fn new(alg: Algorithm, key: Vec<u8>, iv: Vec<u8>, _enc: u32) -> Result<Self> {
++        Ok(Self { alg, ctx: make_aead_ctx(alg, &key)?, nonce: iv })
++    }
++
++    pub fn from_secret(aead: Algorithm, secret: &[u8], enc: u32) -> Result<Self> {
++        let key_len = aead.key_len();
++        let nonce_len = aead.nonce_len();
++
++        let mut key = vec![0; key_len];
++        let mut iv = vec![0; nonce_len];
++
++        derive_pkt_key(aead, secret, &mut key)?;
++        derive_pkt_iv(aead, secret, &mut iv)?;
++
++        let mut pkt_key = Self::new(aead, key, iv, enc)?;
++
++        // Dummy seal operation to prime the AEAD context with the nonce mask.
++        //
++        // This is needed because BoringCrypto requires the first counter (i.e.
++        // packet number) to be zero, which would not be the case for packet
++        // number spaces after Initial as the same packet number sequence is
++        // shared.
++        let _ = pkt_key.seal_with_u64_counter(0, b"", &mut [0_u8; 16], 0, None);
++
++        Ok(pkt_key)
++    }
++
++    pub fn open_with_u64_counter(&self, counter: u64, ad: &[u8], buf: &mut [u8]) -> Result<usize> {
++        let tag_len: usize = self.alg.tag_len();
++
++        let mut out_len = match buf.len().checked_sub(tag_len) {
++            Some(n) => n,
++            None => return Err(Error::CryptoFail),
++        };
++
++        let max_out_len = out_len;
++
++        let nonce = make_nonce(&self.nonce, counter);
++
++        // Safety: FFI call, the input buffers are all valid, with corresponding
++        // ptr and length. The output buffer has at least `max_output`
++        // bytes of space and that maximum is passed to
++        // `EVP_AEAD_CTX_open` as a limit.
++        let rc = unsafe {
++            EVP_AEAD_CTX_open(
++                &self.ctx,              // ctx
++                buf.as_mut_ffi_ptr(),   // out
++                &mut out_len,           // out_len
++                max_out_len,            // max_out_len
++                nonce[..].as_ffi_ptr(), // nonce
++                nonce.len(),            // nonce_len
++                buf.as_ffi_ptr(),       // inp
++                buf.len(),              // in_len
++                ad.as_ffi_ptr(),        // ad
++                ad.len(),               // ad_len
++            )
++        };
++
++        if rc != 1 {
++            return Err(Error::CryptoFail);
++        }
++
++        Ok(out_len)
++    }
++
++    pub fn seal_with_u64_counter(
++        &mut self,
++        counter: u64,
++        ad: &[u8],
++        buf: &mut [u8],
++        in_len: usize,
++        extra_in: Option<&[u8]>,
++    ) -> Result<usize> {
++        let tag_len: usize = self.alg.tag_len();
++
++        let mut out_tag_len = tag_len;
++
++        let (extra_in_ptr, extra_in_len) = match extra_in {
++            Some(v) => (v.as_ffi_ptr(), v.len()),
++
++            None => (std::ptr::null(), 0),
++        };
++
++        let Some((in_out_buf, remaining_buf)) = buf.split_at_mut_checked(in_len) else {
++            return Err(Error::CryptoFail);
++        };
++        // Make sure all the outputs combined fit in the buffer.
++        let max_out_tag_len = tag_len + extra_in_len;
++        if max_out_tag_len > remaining_buf.len() {
++            return Err(Error::CryptoFail);
++        }
++
++        let nonce = make_nonce(&self.nonce, counter);
++
++        let mut out_tag_len = remaining_buf.len();
++        // Safety: the buffers are all valid, with corresponding ptr and length.
++        // `max_out_tag_len` is passed at the maximum size of `remaining_buf`
++        // to ensure that both the extra input and the tag can fit in the `remaining_buf`.
++        let rc = unsafe {
++            EVP_AEAD_CTX_seal_scatter(
++                &mut self.ctx,                  // ctx
++                in_out_buf.as_mut_ffi_ptr(),    // out
++                remaining_buf.as_mut_ffi_ptr(), // out_tag
++                &mut out_tag_len,               // out_tag_len
++                max_out_tag_len,                // max_out_tag_len
++                nonce[..].as_ffi_ptr(),         // nonce
++                nonce.len(),                    // nonce_len
++                in_out_buf.as_ffi_ptr(),        // inp
++                in_len,                         // in_len
++                extra_in_ptr,                   // extra_in
++                extra_in_len,                   // extra_in_len
++                ad.as_ffi_ptr(),                // ad
++                ad.len(),                       // ad_len
++            )
++        };
++
++        if rc != 1 {
++            return Err(Error::CryptoFail);
++        }
++
++        Ok(in_len + out_tag_len)
++    }
++}
++
++#[derive(Clone)]
++#[allow(clippy::large_enum_variant)]
++pub(crate) enum HeaderProtectionKey {
++    Aes(AES_KEY),
++
++    ChaCha(Vec<u8>),
++}
++
++impl HeaderProtectionKey {
++    pub fn new(alg: Algorithm, hp_key: Vec<u8>) -> Result<Self> {
++        match alg {
++            Algorithm::AES128_GCM | Algorithm::AES256_GCM => {
++                if (hp_key.len() != alg.key_len()) {
++                    return Err(Error::CryptoFail);
++                }
++
++                let key_len_bits = alg.key_len() as u32 * 8;
++
++                let mut aes_key = MaybeUninit::<AES_KEY>::zeroed();
++
++                // SAFETY: FFI call, `AES_KEY` has a definite size as generated by `bindgen`, so
++                // its allocation is large enough to hold `hp_key`. The return value of this function
++                // differs from the usual BoringSSL convention.
++                let rc = unsafe {
++                    AES_set_encrypt_key(hp_key.as_ptr(), key_len_bits, aes_key.as_mut_ptr())
++                };
++
++                if rc != 0 {
++                    return Err(Error::CryptoFail);
++                }
++
++                // SAFETY:  zeroed memory is safe for AES_KEY as it is a C type.
++                let aes_key = unsafe { aes_key.assume_init() };
++                Ok(Self::Aes(aes_key))
++            }
++
++            Algorithm::ChaCha20_Poly1305 => Ok(Self::ChaCha(hp_key)),
++        }
++    }
++
++    pub fn new_mask(&self, sample: &[u8]) -> Result<HeaderProtectionMask> {
++        match self {
++            Self::Aes(aes_key) => {
++                if sample.len() != 16 {
++                    return Err(Error::CryptoFail);
++                }
++
++                let mut block = [0_u8; 16];
++
++                // SAFETY: FFI call, `sample` and `block` are both 16 bytes blocks and non-overlapping.
++                unsafe { AES_ecb_encrypt(sample.as_ffi_ptr(), block.as_mut_ffi_ptr(), aes_key, 1) };
++
++                // Downsize the encrypted block to the size of the header
++                // protection mask.
++                //
++                // The length of the slice will always match the size of
++                // `HeaderProtectionMask` so the `unwrap()` is safe.
++                let new_mask = HeaderProtectionMask::try_from(&block[..HP_MASK_LEN]).unwrap();
++                Ok(new_mask)
++            }
++
++            Self::ChaCha(key) => {
++                const PLAINTEXT: &[u8; HP_MASK_LEN] = &[0_u8; HP_MASK_LEN];
++
++                // Check that the key and sample are the expected sizes for ChaCha20.
++                if (key.len() != 32 || sample.len() != 16) {
++                    return Err(Error::CryptoFail);
++                }
++
++                let mut new_mask = HeaderProtectionMask::default();
++
++                let counter = u32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]);
++
++                // SAFETY: FFI call, preconditions upheld:
++                // - `new_mask` is valid for writes of at least `PLAINTEXT.len()` bytes.
++                // - `PLAINTEXT` is valid for reads of `PLAINTEXT.len()` bytes.
++                // - `key` is valid for reads of 32 bytes (standard ChaCha20 key size).
++                // - `sample[size_of::<u32>()..]` is valid for reads of 12 bytes (standard ChaCha20 nonce size).
++                // - The input and output buffers (`PLAINTEXT` and `new_mask`) do not overlap,
++                //    or if they do, they are exactly the same pointer (in-place encryption).
++                unsafe {
++                    CRYPTO_chacha_20(
++                        new_mask.as_mut_ffi_ptr(),
++                        PLAINTEXT.as_ffi_ptr(),
++                        PLAINTEXT.len(),
++                        key.as_ffi_ptr(),
++                        sample[size_of::<u32>()..].as_ffi_ptr(),
++                        counter,
++                    );
++                };
++
++                Ok(new_mask)
++            }
++        }
++    }
++}
++
++fn make_aead_ctx(alg: Algorithm, key: &[u8]) -> Result<EVP_AEAD_CTX> {
++    if key.len() < alg.key_len() {
++        return Err(Error::CryptoFail);
++    }
++
++    let mut ctx = MaybeUninit::uninit();
++
++    let aead = alg.get_evp_aead();
++
++    // SAFETY: FFI call, `key` points to at least `alg.key_len()` bytes.
++    let rc = unsafe {
++        EVP_AEAD_CTX_init(
++            ctx.as_mut_ptr(),
++            aead as *const _,
++            key.as_ffi_ptr(),
++            alg.key_len(),
++            alg.tag_len(),
++            std::ptr::null_mut(),
++        )
++    };
++
++    if rc != 1 {
++        return Err(Error::CryptoFail);
++    }
++
++    // SAFETY: must guarantee that `ctx` is initialized.
++    let ctx = unsafe { ctx.assume_init() };
++    Ok(ctx)
++}
++
++pub(crate) fn hkdf_extract(
++    alg: Algorithm,
++    out: &mut [u8],
++    secret: &[u8],
++    salt: &[u8],
++) -> Result<()> {
++    let mut out_len = out.len();
++
++    // Safety: `EVP_MAX_MD_SIZE` is the maximum output size of
++    // `HKDF_extract` so it'll never overrun the buffer.
++    let rc = unsafe {
++        HKDF_extract(
++            out.as_mut_ffi_ptr(),
++            &mut out_len,
++            alg.get_evp_digest() as *const _,
++            secret.as_ffi_ptr(),
++            secret.len(),
++            salt.as_ffi_ptr(),
++            salt.len(),
++        )
++    };
++
++    if rc != 1 {
++        return Err(Error::CryptoFail);
++    }
++
++    Ok(())
++}
++
++pub(crate) fn hkdf_expand(
++    alg: Algorithm,
++    out: &mut [u8],
++    secret: &[u8],
++    info: &[u8],
++) -> Result<()> {
++    // Safety: `HKDF_expand` writes exactly `out_len` bytes or else
++    // returns zero. `evp_md` is valid by construction.
++    let rc = unsafe {
++        HKDF_expand(
++            out.as_mut_ffi_ptr(),
++            out.len(),
++            alg.get_evp_digest() as *const _, // evp_md
++            secret.as_ffi_ptr(),
++            secret.len(),
++            info.as_ffi_ptr(),
++            info.len(),
++        )
++    };
++
++    if rc != 1 {
++        return Err(Error::CryptoFail);
++    }
++
++    Ok(())
++}
+diff --git a/src/crypto/mod.rs b/src/crypto/mod.rs
+index dde02cb..dbedb05 100644
+--- a/src/crypto/mod.rs
++++ b/src/crypto/mod.rs
+@@ -28,6 +28,8 @@ use libc::c_int;
+ use libc::c_void;
+ 
+ use crate::Error;
++use crate::FfiMutSlice;
++use crate::FfiSlice;
+ use crate::Result;
+ 
+ use crate::packet;
+@@ -111,18 +113,23 @@ impl Algorithm {
+     }
+ }
+ 
++#[cfg(not(feature = "android"))]
+ #[allow(non_camel_case_types)]
+ #[repr(transparent)]
+ pub struct EVP_AEAD {
+     _unused: c_void,
+ }
+ 
++#[cfg(not(feature = "android"))]
+ #[allow(non_camel_case_types)]
+ #[repr(transparent)]
+ struct EVP_MD {
+     _unused: c_void,
+ }
+ 
++#[cfg(feature = "android")]
++use bssl_sys::{CRYPTO_memcmp, EVP_MD, EVP_sha256, EVP_sha384};
++
+ type HeaderProtectionMask = [u8; HP_MASK_LEN];
+ 
+ pub struct Open {
+@@ -510,7 +517,12 @@ pub fn verify_slices_are_equal(a: &[u8], b: &[u8]) -> Result<()> {
+         return Err(Error::CryptoFail);
+     }
+ 
++    #[cfg(not(feature = "android"))]
+     let rc = unsafe { CRYPTO_memcmp(a.as_ptr(), b.as_ptr(), a.len()) };
++    #[cfg(feature = "android")]
++    // SAFETY: arguments to CRYPTO_memcmp are valid; both a and b are at least a.len() bytes
++    // long and not null unless a.len() is 0
++    let rc = unsafe { CRYPTO_memcmp(a.as_ffi_void_ptr(), b.as_ffi_void_ptr(), a.len()) };
+ 
+     if rc == 0 {
+         return Ok(());
+@@ -519,6 +531,7 @@ pub fn verify_slices_are_equal(a: &[u8], b: &[u8]) -> Result<()> {
+     Err(Error::CryptoFail)
+ }
+ 
++#[cfg(not(feature = "android"))]
+ extern "C" {
+     fn EVP_sha256() -> *const EVP_MD;
+ 
+@@ -667,11 +680,16 @@ mod tests {
+     }
+ }
+ 
+-#[cfg(not(feature = "openssl"))]
++#[cfg(all(not(feature = "openssl"), not(feature = "android")))]
+ mod boringssl;
+-#[cfg(not(feature = "openssl"))]
++#[cfg(all(not(feature = "openssl"), not(feature = "android")))]
+ pub(crate) use boringssl::*;
+ 
++#[cfg(feature = "android")]
++mod android_boringssl;
++#[cfg(feature = "android")]
++pub(crate) use android_boringssl::*;
++
+ #[cfg(feature = "openssl")]
+ mod openssl_quictls;
+ #[cfg(feature = "openssl")]
+diff --git a/src/rand.rs b/src/rand.rs
+index 40ea086..5bf802c 100644
+--- a/src/rand.rs
++++ b/src/rand.rs
+@@ -59,6 +59,10 @@ pub fn rand_u64_uniform(max: u64) -> u64 {
+     r / chunk_size
+ }
+ 
++#[cfg(feature = "android")]
++use bssl_sys::RAND_bytes;
++
++#[cfg(not(feature = "android"))]
+ extern "C" {
+     fn RAND_bytes(buf: *mut u8, len: libc::size_t) -> libc::c_int;
+ }
+diff --git a/src/tls/android_boringssl.rs b/src/tls/android_boringssl.rs
+new file mode 100644
+index 0000000..98cb0a5
+--- /dev/null
++++ b/src/tls/android_boringssl.rs
+@@ -0,0 +1,338 @@
++#![deny(clippy::undocumented_unsafe_blocks)]
++
++use super::*;
++
++use crate::FfiSlice;
++
++use std::str;
++
++use bssl_sys::{
++    sk_CRYPTO_BUFFER_num, sk_CRYPTO_BUFFER_value, stack_st_CRYPTO_BUFFER, CRYPTO_BUFFER_data,
++    CRYPTO_BUFFER_len, OPENSSL_free, SSL_CTX_set_early_data_enabled, SSL_SESSION_free,
++    SSL_SESSION_from_bytes, SSL_SESSION_to_bytes, SSL_get0_peer_certificates, SSL_get_SSL_CTX,
++    SSL_get_curve_id, SSL_get_curve_name, SSL_get_early_data_reason,
++    SSL_get_peer_signature_algorithm, SSL_get_signature_algorithm_name, SSL_in_early_data,
++    SSL_reset_early_data_reject, SSL_set_quic_early_data_context, SSL_set_session, CRYPTO_BUFFER,
++};
++
++pub use bssl_sys::SSL_QUIC_METHOD;
++
++#[cfg(test)]
++use bssl_sys::{SSL_set_private_key_method, SSL_PRIVATE_KEY_METHOD};
++
++pub(super) static QUICHE_STREAM_METHOD: SSL_QUIC_METHOD = SSL_QUIC_METHOD {
++    set_read_secret: Some(g3_set_read_secret),
++    set_write_secret: Some(g3_set_write_secret),
++    add_handshake_data: Some(g3_add_handshake_data),
++    flush_flight: Some(g3_flush_flight),
++    send_alert: Some(g3_send_alert),
++};
++
++impl Context {
++    pub fn set_early_data_enabled(&mut self, enabled: bool) {
++        unsafe {
++            // SAFETY: `self.as_mut_ptr()` returns a valid pointer to an initialized `SSL_CTX`.
++            SSL_CTX_set_early_data_enabled(self.as_mut_ptr(), if enabled { 1 } else { 0 });
++        }
++    }
++}
++
++impl Handshake {
++    pub fn set_quic_early_data_context(&mut self, context: &[u8]) -> Result<()> {
++        map_result(unsafe {
++            // SAFETY: `self.as_mut_ptr()` returns a valid pointer to an initialized `SSL`,
++            // and `context` provides a valid pointer and length.
++            SSL_set_quic_early_data_context(self.as_mut_ptr(), context.as_ffi_ptr(), context.len())
++        })
++    }
++
++    pub fn set_session(&mut self, session: &[u8]) -> Result<()> {
++        let ctx = unsafe {
++            // SAFETY: `self.as_ptr()` returns a valid pointer to an initialized `SSL`.
++            SSL_get_SSL_CTX(self.as_ptr())
++        };
++
++        if ctx.is_null() {
++            return Err(Error::TlsFail);
++        }
++
++        let session = unsafe {
++            // SAFETY: `session` provides a valid buffer and length, and `ctx` is a valid `SSL_CTX`.
++            SSL_SESSION_from_bytes(session.as_ffi_ptr(), session.len(), ctx)
++        };
++
++        if session.is_null() {
++            return Err(Error::TlsFail);
++        }
++
++        let rc = unsafe {
++            // SAFETY: `self.as_mut_ptr()` and `session` are valid pointers to `SSL` and
++            // `SSL_SESSION`.
++            SSL_set_session(self.as_mut_ptr(), session)
++        };
++
++        unsafe {
++            // SAFETY: `session` was allocated by `SSL_SESSION_from_bytes` with exclusive access,
++            // and is safe for us to free.
++            SSL_SESSION_free(session);
++        }
++
++        map_result(rc)
++    }
++
++    pub fn reset_early_data_reject(&mut self) {
++        unsafe {
++            // SAFETY: `self.as_mut_ptr()` returns a valid pointer to an initialized `SSL`.
++            SSL_reset_early_data_reject(self.as_mut_ptr())
++        };
++    }
++
++    pub fn curve(&self) -> Option<String> {
++        let curve_id = unsafe {
++            // SAFETY: `self.as_ptr()` returns a valid pointer to an initialized `SSL`.
++            SSL_get_curve_id(self.as_ptr())
++        };
++        if curve_id == 0 {
++            return None;
++        }
++
++        let curve_name = unsafe {
++            // SAFETY: `curve_id` is a valid curve ID returned from `SSL_get_curve_id`.
++            SSL_get_curve_name(curve_id)
++        };
++        if curve_name.is_null() {
++            return None;
++        }
++
++        let curve = unsafe {
++            // SAFETY:
++            // - `curve_name` is non-null and points to a valid null-terminated C string.
++            // - BoringSSL curve names are static ASCII strings, which are valid UTF-8.
++            str::from_utf8_unchecked(ffi::CStr::from_ptr(curve_name).to_bytes())
++        };
++
++        Some(curve.to_string())
++    }
++
++    pub fn sigalg(&self) -> Option<String> {
++        let sigalg_id = unsafe {
++            // SAFETY: `self.as_ptr()` returns a valid pointer to an initialized `SSL`.
++            SSL_get_peer_signature_algorithm(self.as_ptr())
++        };
++        if sigalg_id == 0 {
++            return None;
++        }
++
++        let sigalg_name = unsafe {
++            // SAFETY: `sigalg_id` is a valid signature algorithm ID returned from
++            // `SSL_get_peer_signature_algorithm`.
++            SSL_get_signature_algorithm_name(sigalg_id, 1)
++        };
++        if sigalg_name.is_null() {
++            return None;
++        }
++
++        let sigalg = unsafe {
++            // SAFETY:
++            // - `sigalg_name` is non-null and points to a valid null-terminated C string.
++            // - BoringSSL signature algorithm names are static ASCII strings, which are valid
++            //   UTF-8.
++            str::from_utf8_unchecked(ffi::CStr::from_ptr(sigalg_name).to_bytes())
++        };
++
++        Some(sigalg.to_string())
++    }
++
++    pub fn peer_cert_chain(&self) -> Option<Vec<Vec<u8>>> {
++        let chain: *const stack_st_CRYPTO_BUFFER = unsafe {
++            // SAFETY:
++            // - `self.as_ptr()` returns a valid pointer to an initialized `SSL`.
++            // - The returned stack pointer is valid for the lifetime of `self`.
++            map_result_ptr(SSL_get0_peer_certificates(self.as_ptr())).ok()?
++        };
++
++        let num = unsafe {
++            // SAFETY: `chain` is a valid pointer to `stack_st_CRYPTO_BUFFER`.
++            sk_CRYPTO_BUFFER_num(chain)
++        };
++        if num == 0 {
++            return None;
++        }
++
++        let mut cert_chain = vec![];
++        for i in 0..num {
++            let buffer = map_result_ptr(unsafe {
++                // SAFETY: `chain` is a valid pointer to `stack_st_CRYPTO_BUFFER` and `i` is within
++                // bounds (`0..num`).
++                sk_CRYPTO_BUFFER_value(chain, i)
++            })
++            .ok()?;
++
++            let out_len = unsafe {
++                // SAFETY: `buffer` is a valid non-null `CRYPTO_BUFFER`.
++                CRYPTO_BUFFER_len(buffer)
++            };
++            let out = unsafe {
++                // SAFETY: `buffer` is a valid non-null `CRYPTO_BUFFER`.
++                CRYPTO_BUFFER_data(buffer)
++            };
++            debug_assert!(!out.is_null() && out_len > 0);
++            let slice = unsafe {
++                // SAFETY:
++                // - `out` is a valid BoringSSL-allocated buffer of size `out_len`.
++                // - The buffer is initialized and valid for reads of `out_len` bytes.
++                // - BoringSSL guarantees the certificate is never empty per RFC9846.
++                slice::from_raw_parts(out, out_len)
++            };
++
++            cert_chain.push(slice.to_vec());
++        }
++
++        Some(cert_chain)
++    }
++
++    pub fn peer_cert(&self) -> Option<Vec<u8>> {
++        let chain: *const stack_st_CRYPTO_BUFFER = unsafe {
++            // SAFETY:
++            // - `self.as_ptr()` returns a valid pointer to an initialized `SSL`.
++            // - The returned stack pointer is valid for the lifetime of `self`.
++            map_result_ptr(SSL_get0_peer_certificates(self.as_ptr())).ok()?
++        };
++        let num = unsafe {
++            // SAFETY: `chain` is a valid pointer to `stack_st_CRYPTO_BUFFER`.
++            sk_CRYPTO_BUFFER_num(chain)
++        };
++        if num == 0 {
++            return None;
++        }
++
++        let buffer = map_result_ptr(unsafe {
++            // SAFETY: `chain` is a valid pointer to `stack_st_CRYPTO_BUFFER` and index 0 is within
++            // bounds (`0 < num`).
++            sk_CRYPTO_BUFFER_value(chain, 0)
++        })
++        .ok()?;
++
++        let out_len = unsafe {
++            // SAFETY: `buffer` is a valid non-null `CRYPTO_BUFFER`.
++            CRYPTO_BUFFER_len(buffer)
++        };
++
++        let out = unsafe {
++            // SAFETY: `buffer` is a valid non-null `CRYPTO_BUFFER`.
++            CRYPTO_BUFFER_data(buffer)
++        };
++        debug_assert!(!out.is_null() && out_len > 0);
++        let peer_cert = unsafe {
++            // SAFETY:
++            // - `out` is a valid BoringSSL-allocated buffer of size `out_len`.
++            // - The buffer is initialized and valid for reads of `out_len` bytes.
++            // - BoringSSL guarantees the certificate is never empty per RFC9846.
++            slice::from_raw_parts(out, out_len)
++        };
++
++        Some(peer_cert.to_vec())
++    }
++
++    // Only used for testing handling of failure during key signing.
++    #[cfg(test)]
++    pub fn set_failing_private_key_method(&mut self) {
++        // SAFETY: C callback invoked by BoringSSL; ignores arguments and unconditionally returns
++        // failure.
++        unsafe extern "C" fn failing_sign(
++            _ssl: *mut SSL,
++            _out: *mut u8,
++            _out_len: *mut usize,
++            _max_out: usize,
++            _signature_algorithm: u16,
++            _in: *const u8,
++            _in_len: usize,
++        ) -> ssl_private_key_result_t {
++            bssl_sys::ssl_private_key_result_t_ssl_private_key_failure
++        }
++
++        // SAFETY: C callback invoked by BoringSSL; ignores arguments and unconditionally returns
++        // failure.
++        unsafe extern "C" fn failing_decrypt(
++            _ssl: *mut SSL,
++            _out: *mut u8,
++            _out_len: *mut usize,
++            _max_out: usize,
++            _in: *const u8,
++            _in_len: usize,
++        ) -> ssl_private_key_result_t {
++            bssl_sys::ssl_private_key_result_t_ssl_private_key_failure
++        }
++
++        // SAFETY: C callback invoked by BoringSSL; ignores arguments and unconditionally returns
++        // failure.
++        unsafe extern "C" fn failing_complete(
++            _ssl: *mut SSL,
++            _out: *mut u8,
++            _out_len: *mut usize,
++            _max_out: usize,
++        ) -> ssl_private_key_result_t {
++            bssl_sys::ssl_private_key_result_t_ssl_private_key_failure
++        }
++
++        static QUICHE_PRIVATE_KEY_METHOD: SSL_PRIVATE_KEY_METHOD = SSL_PRIVATE_KEY_METHOD {
++            decrypt: Some(failing_decrypt),
++            sign: Some(failing_sign),
++            complete: Some(failing_complete),
++        };
++
++        unsafe {
++            // SAFETY:
++            // - `self.as_mut_ptr()` is a valid pointer to an initialized `SSL`.
++            // - `QUICHE_PRIVATE_KEY_METHOD` is a valid static `SSL_PRIVATE_KEY_METHOD`.
++            SSL_set_private_key_method(self.as_mut_ptr(), &raw const QUICHE_PRIVATE_KEY_METHOD);
++        }
++    }
++
++    pub fn is_in_early_data(&self) -> bool {
++        unsafe {
++            // SAFETY: `self.as_ptr()` returns a valid pointer to an initialized `SSL`.
++            SSL_in_early_data(self.as_ptr()) == 1
++        }
++    }
++
++    pub fn early_data_reason(&self) -> u32 {
++        let reuse_reason_status = unsafe {
++            // SAFETY: `self.as_ptr()` returns a valid pointer to an initialized `SSL`.
++            SSL_get_early_data_reason(self.as_ptr())
++        };
++        reuse_reason_status as u32
++    }
++}
++
++pub(super) fn get_session_bytes(session: *mut SSL_SESSION) -> Result<Vec<u8>> {
++    let mut out = ptr::null_mut();
++    let mut out_len = 0;
++
++    let rc = unsafe {
++        // SAFETY:
++        // - `session` is a valid `SSL_SESSION` handle.
++        // - `out` and `out_len` are valid pointers to receive the allocated buffer and its length.
++        SSL_SESSION_to_bytes(session, &raw mut out, &raw mut out_len)
++    };
++    if rc == 0 || out.is_null() {
++        return Err(Error::TlsFail);
++    }
++
++    let session_bytes = unsafe {
++        // SAFETY:
++        // - `out` points to a valid BoringSSL-allocated buffer of length `out_len`.
++        // - The buffer is initialized and valid for reads of `out_len` bytes.
++        slice::from_raw_parts(out, out_len)
++    };
++    let session_bytes = session_bytes.to_vec();
++    unsafe {
++        // SAFETY: `out` was allocated by BoringSSL via `SSL_SESSION_to_bytes` with exclusive
++        // access, and is safe for us to free using `OPENSSL_free`.
++        OPENSSL_free(out as *mut _)
++    };
++
++    Ok(session_bytes)
++}
++
++pub(super) const TLS_ERROR: c_int = 3;
+diff --git a/src/tls/boringssl.rs b/src/tls/boringssl.rs
+index 4dc3b55..71abccb 100644
+--- a/src/tls/boringssl.rs
++++ b/src/tls/boringssl.rs
+@@ -306,7 +306,7 @@ pub struct ssl_early_data_reason_t(pub ::std::os::raw::c_uint);
+ extern "C" {
+     // SSL_METHOD specific for boringssl.
+     pub(super) fn SSL_CTX_set_tlsext_ticket_keys(
+-        ctx: *mut SSL_CTX, key: *const u8, key_len: usize,
++        ctx: *mut SSL_CTX, key: *const c_void, key_len: usize,
+     ) -> c_int;
+     fn SSL_CTX_set_early_data_enabled(ctx: *mut SSL_CTX, enabled: i32);
+ 
+diff --git a/src/tls/mod.rs b/src/tls/mod.rs
+index fb36033..25ecfb7 100644
+--- a/src/tls/mod.rs
++++ b/src/tls/mod.rs
+@@ -34,6 +34,8 @@ use std::sync::LazyLock;
+ 
+ use libc::c_char;
+ use libc::c_int;
++#[cfg(feature = "android")]
++use libc::c_long;
+ use libc::c_uint;
+ use libc::c_void;
+ 
+@@ -50,68 +52,97 @@ const TLS1_3_VERSION: u16 = 0x0304;
+ const TLS_ALERT_ERROR: u64 = 0x100;
+ const INTERNAL_ERROR: u64 = 0x01;
+ 
++#[cfg(not(feature = "android"))]
+ #[allow(non_camel_case_types)]
+ #[repr(transparent)]
+ struct SSL_METHOD {
+     _unused: c_void,
+ }
++#[cfg(feature = "android")]
++use bssl_sys::SSL_METHOD;
+ 
++#[cfg(not(feature = "android"))]
+ #[allow(non_camel_case_types)]
+ #[repr(transparent)]
+ struct SSL_CTX {
+     _unused: c_void,
+ }
++#[cfg(feature = "android")]
++use bssl_sys::SSL_CTX;
+ 
++#[cfg(not(feature = "android"))]
+ #[allow(non_camel_case_types)]
+ #[repr(transparent)]
+ struct SSL {
+     _unused: c_void,
+ }
++#[cfg(feature = "android")]
++use bssl_sys::SSL;
+ 
++#[cfg(not(feature = "android"))]
+ #[allow(non_camel_case_types)]
+ #[repr(transparent)]
+ struct SSL_CIPHER {
+     _unused: c_void,
+ }
++#[cfg(feature = "android")]
++use bssl_sys::SSL_CIPHER;
+ 
++#[cfg(not(feature = "android"))]
+ #[allow(non_camel_case_types)]
+ #[repr(transparent)]
+ struct SSL_SESSION {
+     _unused: c_void,
+ }
++#[cfg(feature = "android")]
++use bssl_sys::SSL_SESSION;
+ 
++#[cfg(not(feature = "android"))]
+ #[allow(non_camel_case_types)]
+ #[repr(transparent)]
+ struct X509_VERIFY_PARAM {
+     _unused: c_void,
+ }
++#[cfg(feature = "android")]
++use bssl_sys::X509_VERIFY_PARAM;
+ 
++#[cfg(not(feature = "android"))]
+ #[allow(non_camel_case_types)]
+ #[repr(transparent)]
+ #[cfg(windows)]
+ struct X509_STORE {
+     _unused: c_void,
+ }
++#[cfg(all(feature = "android", windows))]
++use bssl_sys::X509_STORE;
+ 
++#[cfg(not(feature = "android"))]
+ #[allow(non_camel_case_types)]
+ #[repr(transparent)]
+ struct X509_STORE_CTX {
+     _unused: c_void,
+ }
++#[cfg(feature = "android")]
++use bssl_sys::X509_STORE_CTX;
+ 
++#[cfg(not(feature = "android"))]
+ #[allow(non_camel_case_types)]
+ #[repr(transparent)]
+ #[cfg(windows)]
+ struct X509 {
+     _unused: c_void,
+ }
++#[cfg(all(feature = "android", windows))]
++use bssl_sys::X509;
+ 
++#[cfg(not(feature = "android"))]
+ #[allow(non_camel_case_types)]
+ #[repr(transparent)]
+ struct STACK_OF {
+     _unused: c_void,
+ }
+ 
++#[cfg(not(feature = "android"))]
+ #[cfg(test)]
+ #[repr(C)]
+ #[allow(non_camel_case_types)]
+@@ -122,9 +153,19 @@ enum ssl_private_key_result_t {
+     ssl_private_key_failure,
+ }
+ 
++#[cfg(feature = "android")]
++use bssl_sys::ssl_private_key_result_t;
++
+ /// BoringSSL ex_data index for quiche connections.
+ pub static QUICHE_EX_DATA_INDEX: LazyLock<c_int> = LazyLock::new(|| unsafe {
+-    SSL_get_ex_new_index(0, ptr::null(), ptr::null(), ptr::null(), ptr::null())
++    #[cfg(not(feature = "android"))]
++    {
++        SSL_get_ex_new_index(0, ptr::null(), ptr::null(), ptr::null(), ptr::null())
++    }
++    #[cfg(feature = "android")]
++    {
++        bssl_sys::SSL_get_ex_new_index(0, ptr::null_mut(), ptr::null_mut(), None, None)
++    }
+ });
+ 
+ pub struct Context(*mut SSL_CTX);
+@@ -238,22 +279,45 @@ impl Context {
+             );
+ 
+             while !ctx_p.is_null() {
+-                let in_p = (*ctx_p).pbCertEncoded as *const u8;
++                #[cfg(not(feature = "android"))]
++                {
++                    let in_p = (*ctx_p).pbCertEncoded as *const u8;
+ 
+-                let cert = d2i_X509(
+-                    ptr::null_mut(),
+-                    &in_p,
+-                    (*ctx_p).cbCertEncoded as i32,
+-                );
+-                if !cert.is_null() {
+-                    X509_STORE_add_cert(ctx_store, cert);
+-                }
++                    let cert = d2i_X509(ptr::null_mut(), &in_p, (*ctx_p).cbCertEncoded as i32);
++                    if !cert.is_null() {
++                        X509_STORE_add_cert(ctx_store, cert);
++                    }
+ 
+-                X509_free(cert);
++                    X509_free(cert);
+ 
+-                ctx_p = windows_sys::Win32::Security::Cryptography::CertEnumCertificatesInStore(
+-                    sys_store, ctx_p,
+-                );
++                    ctx_p = windows_sys::Win32::Security::Cryptography::CertEnumCertificatesInStore(
++                        sys_store, ctx_p,
++                    );
++                }
++                #[cfg(feature = "android")]
++                {
++                    let mut in_p = (*ctx_p).pbCertEncoded as *const u8;
++
++                    #[cfg(not(target_os = "windows"))]
++                    let in_pp = &in_p;
++                    #[cfg(target_os = "windows")]
++                    let mut in_pp = &mut in_p as *mut *const u8;
++
++                    let cert = bssl_sys::d2i_X509(
++                        ptr::null_mut(),
++                        in_pp,
++                        (*ctx_p).cbCertEncoded as c_long,
++                    );
++                    if !cert.is_null() {
++                        bssl_sys::X509_STORE_add_cert(ctx_store, cert);
++                    }
++
++                    bssl_sys::X509_free(cert);
++
++                    ctx_p = windows_sys::Win32::Security::Cryptography::CertEnumCertificatesInStore(
++                        sys_store, ctx_p,
++                    );
++                }
+             }
+ 
+             // tidy up
+@@ -328,7 +392,7 @@ impl Context {
+         map_result(unsafe {
+             SSL_CTX_set_tlsext_ticket_keys(
+                 self.as_mut_ptr(),
+-                key.as_ptr(),
++                key.as_ptr().cast(),
+                 key.len(),
+             )
+         })
+@@ -527,6 +591,8 @@ impl Handshake {
+         &mut self, level: crypto::Level, buf: &[u8],
+     ) -> Result<()> {
+         self.provided_data_outstanding = true;
++        #[cfg(feature = "android")]
++        let level = to_bssl_level(level);
+         let rc = unsafe {
+             SSL_provide_quic_data(
+                 self.as_mut_ptr(),
+@@ -564,7 +630,11 @@ impl Handshake {
+     }
+ 
+     pub fn write_level(&self) -> crypto::Level {
++        #[cfg(not(feature = "android"))]
+         unsafe { SSL_quic_write_level(self.as_ptr()) }
++        #[cfg(feature = "android")]
++        from_bssl_level(unsafe { SSL_quic_write_level(self.as_ptr()) })
++            .expect("BoringSSL returned an unknown QUIC encryption level")
+     }
+ 
+     pub fn cipher(&self) -> Option<crypto::Algorithm> {
+@@ -755,6 +825,42 @@ fn get_cipher_from_ptr(cipher: *const SSL_CIPHER) -> Result<crypto::Algorithm> {
+     Ok(alg)
+ }
+ 
++#[cfg(feature = "android")]
++fn from_bssl_level(level: bssl_sys::ssl_encryption_level_t) -> Option<crypto::Level> {
++    match level {
++        bssl_sys::ssl_encryption_level_t_ssl_encryption_initial => Some(crypto::Level::Initial),
++        bssl_sys::ssl_encryption_level_t_ssl_encryption_early_data => Some(crypto::Level::ZeroRTT),
++        bssl_sys::ssl_encryption_level_t_ssl_encryption_handshake => Some(crypto::Level::Handshake),
++        bssl_sys::ssl_encryption_level_t_ssl_encryption_application => Some(crypto::Level::OneRTT),
++        _ => None,
++    }
++}
++
++#[cfg(feature = "android")]
++fn to_bssl_level(level: crypto::Level) -> bssl_sys::ssl_encryption_level_t {
++    match level {
++        crypto::Level::Initial => bssl_sys::ssl_encryption_level_t_ssl_encryption_initial,
++        crypto::Level::ZeroRTT => bssl_sys::ssl_encryption_level_t_ssl_encryption_early_data,
++        crypto::Level::Handshake => bssl_sys::ssl_encryption_level_t_ssl_encryption_handshake,
++        crypto::Level::OneRTT => bssl_sys::ssl_encryption_level_t_ssl_encryption_application,
++    }
++}
++
++#[cfg(feature = "android")]
++unsafe extern "C" fn g3_set_read_secret(
++    ssl: *mut SSL,
++    level: bssl_sys::ssl_encryption_level_t,
++    cipher: *const SSL_CIPHER,
++    secret: *const u8,
++    secret_len: usize,
++) -> c_int {
++    let level = match from_bssl_level(level) {
++        Some(v) => v,
++        None => return 0,
++    };
++    set_read_secret(ssl, level, cipher, secret, secret_len)
++}
++
+ extern "C" fn set_read_secret(
+     ssl: *mut SSL, level: crypto::Level, cipher: *const SSL_CIPHER,
+     secret: *const u8, secret_len: usize,
+@@ -804,6 +910,21 @@ extern "C" fn set_read_secret(
+     1
+ }
+ 
++#[cfg(feature = "android")]
++unsafe extern "C" fn g3_set_write_secret(
++    ssl: *mut SSL,
++    level: bssl_sys::ssl_encryption_level_t,
++    cipher: *const SSL_CIPHER,
++    secret: *const u8,
++    secret_len: usize,
++) -> c_int {
++    let level = match from_bssl_level(level) {
++        Some(v) => v,
++        None => return 0,
++    };
++    set_write_secret(ssl, level, cipher, secret, secret_len)
++}
++
+ extern "C" fn set_write_secret(
+     ssl: *mut SSL, level: crypto::Level, cipher: *const SSL_CIPHER,
+     secret: *const u8, secret_len: usize,
+@@ -848,6 +969,20 @@ extern "C" fn set_write_secret(
+     1
+ }
+ 
++#[cfg(feature = "android")]
++unsafe extern "C" fn g3_add_handshake_data(
++    ssl: *mut SSL,
++    level: bssl_sys::ssl_encryption_level_t,
++    data: *const u8,
++    len: usize,
++) -> c_int {
++    let level = match from_bssl_level(level) {
++        Some(v) => v,
++        None => return 0,
++    };
++    add_handshake_data(ssl, level, data, len)
++}
++
+ extern "C" fn add_handshake_data(
+     ssl: *mut SSL, level: crypto::Level, data: *const u8, len: usize,
+ ) -> c_int {
+@@ -882,6 +1017,11 @@ extern "C" fn add_handshake_data(
+     1
+ }
+ 
++#[cfg(feature = "android")]
++unsafe extern "C" fn g3_flush_flight(ssl: *mut SSL) -> c_int {
++    flush_flight(ssl)
++}
++
+ extern "C" fn flush_flight(_ssl: *mut SSL) -> c_int {
+     // We don't really need to anything here since the output packets are
+     // generated separately, when conn.send() is called.
+@@ -889,6 +1029,19 @@ extern "C" fn flush_flight(_ssl: *mut SSL) -> c_int {
+     1
+ }
+ 
++#[cfg(feature = "android")]
++unsafe extern "C" fn g3_send_alert(
++    ssl: *mut SSL,
++    level: bssl_sys::ssl_encryption_level_t,
++    alert: u8,
++) -> c_int {
++    let level = match from_bssl_level(level) {
++        Some(v) => v,
++        None => return 0,
++    };
++    send_alert(ssl, level, alert)
++}
++
+ extern "C" fn send_alert(
+     ssl: *mut SSL, level: crypto::Level, alert: u8,
+ ) -> c_int {
+@@ -935,7 +1088,7 @@ extern "C" fn keylog(ssl: *const SSL, line: *const c_char) {
+ }
+ 
+ extern "C" fn select_alpn(
+-    ssl: *mut SSL, out: *mut *const u8, out_len: *mut u8, inp: *mut u8,
++    ssl: *mut SSL, out: *mut *const u8, out_len: *mut u8, inp: *const u8,
+     in_len: c_uint, _arg: *mut c_void,
+ ) -> c_int {
+     // SSL_TLSEXT_ERR_OK 0
+@@ -1083,6 +1236,35 @@ fn log_ssl_error() {
+     );
+ }
+ 
++#[cfg(feature = "android")]
++use bssl_sys::{
++    ERR_error_string_n, ERR_peek_error, SSL_CIPHER_get_id,
++    SSL_CTX_load_verify_locations, SSL_CTX_sess_set_new_cb,
++    SSL_CTX_set_alpn_protos, SSL_CTX_set_alpn_select_cb,
++    SSL_CTX_set_keylog_callback, SSL_CTX_set_session_cache_mode,
++    SSL_CTX_set_tlsext_ticket_keys, SSL_CTX_set_verify,
++    SSL_CTX_use_PrivateKey_file, SSL_CTX_use_certificate_chain_file, SSL_clear,
++    SSL_do_handshake, SSL_free, SSL_get0_alpn_selected, SSL_get0_param,
++    SSL_get_current_cipher, SSL_get_error, SSL_get_ex_data,
++    SSL_get_peer_quic_transport_params, SSL_get_servername, SSL_in_init,
++    SSL_process_quic_post_handshake, SSL_provide_quic_data,
++    SSL_quic_write_level, SSL_session_reused, SSL_set_accept_state,
++    SSL_set_connect_state, SSL_set_ex_data, SSL_set_max_proto_version,
++    SSL_set_min_proto_version, SSL_set_quic_method,
++    SSL_set_quic_transport_params, SSL_set_quic_use_legacy_codepoint,
++    SSL_set_quiet_shutdown, SSL_set_tlsext_host_name,
++    X509_VERIFY_PARAM_set1_host,
++};
++#[cfg(feature = "android")]
++use bssl_sys::{SSL_CTX_free, SSL_CTX_new, SSL_new, TLS_method};
++#[cfg(all(feature = "android", not(windows)))]
++use bssl_sys::SSL_CTX_set_default_verify_paths;
++#[cfg(all(feature = "android", windows))]
++use bssl_sys::SSL_CTX_get_cert_store;
++#[cfg(all(feature = "android", test))]
++use bssl_sys::SSL_set_options;
++
++#[cfg(not(feature = "android"))]
+ extern "C" {
+     // Note: some vendor-specific methods are implemented by each vendor's
+     // submodule (openssl-quictls / boringssl).
+@@ -1138,7 +1320,7 @@ extern "C" {
+                 ssl: *mut SSL,
+                 out: *mut *const u8,
+                 out_len: *mut u8,
+-                inp: *mut u8,
++                inp: *const u8,
+                 in_len: c_uint,
+                 arg: *mut c_void,
+             ) -> c_int,
+@@ -1250,10 +1432,15 @@ extern "C" {
+ 
+ }
+ 
+-#[cfg(not(feature = "openssl"))]
++#[cfg(all(not(feature = "openssl"), not(feature = "android")))]
+ mod boringssl;
+-#[cfg(not(feature = "openssl"))]
+-use boringssl::*;
++#[cfg(all(not(feature = "openssl"), not(feature = "android")))]
++pub(crate) use boringssl::*;
++
++#[cfg(feature = "android")]
++mod android_boringssl;
++#[cfg(feature = "android")]
++pub(crate) use android_boringssl::*;
+ 
+ #[cfg(feature = "openssl")]
+ mod openssl_quictls;

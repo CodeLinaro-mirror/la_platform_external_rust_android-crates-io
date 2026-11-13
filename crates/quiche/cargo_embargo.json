@@ -6,6 +6,7 @@
     "com.android.tethering"
   ],
   "min_sdk_version": "29",
+  "run_cargo": false,
   "package": {
     "quiche": {
       "patch": "patches/Android.bp.patch",
@@ -22,6 +23,9 @@
   },
   "variants": [
     {
+      "features": [
+        "android"
+      ],
       "module_blocklist": [
         "libquiche_static"
       ],
@@ -30,6 +34,10 @@
       }
     },
     {
+      "features": [
+        "android",
+        "default"
+      ],
       "module_blocklist": [
         "libquiche",
         "libquiche_shared",
@@ -46,6 +54,10 @@
       }
     },
     {
+      "features": [
+        "android",
+        "default"
+      ],
       "module_blocklist": [
         "libquiche",
         "libquiche_shared",
@@ -63,6 +75,9 @@
       }
     },
     {
+      "features": [
+        "android"
+      ],
       "module_blocklist": [
         "libquiche_shared",
         "libquiche_static"

@@ -28,6 +28,8 @@ use libc::c_int;
 use libc::c_void;
 
 use crate::Error;
+use crate::FfiMutSlice;
+use crate::FfiSlice;
 use crate::Result;
 
 use crate::packet;
@@ -111,17 +113,22 @@ impl Algorithm {
     }
 }
 
+#[cfg(not(feature = "android"))]
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 pub struct EVP_AEAD {
     _unused: c_void,
 }
 
+#[cfg(not(feature = "android"))]
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 struct EVP_MD {
     _unused: c_void,
 }
+
+#[cfg(feature = "android")]
+use bssl_sys::{CRYPTO_memcmp, EVP_MD, EVP_sha256, EVP_sha384};
 
 type HeaderProtectionMask = [u8; HP_MASK_LEN];
 
@@ -510,7 +517,12 @@ pub fn verify_slices_are_equal(a: &[u8], b: &[u8]) -> Result<()> {
         return Err(Error::CryptoFail);
     }
 
+    #[cfg(not(feature = "android"))]
     let rc = unsafe { CRYPTO_memcmp(a.as_ptr(), b.as_ptr(), a.len()) };
+    #[cfg(feature = "android")]
+    // SAFETY: arguments to CRYPTO_memcmp are valid; both a and b are at least a.len() bytes
+    // long and not null unless a.len() is 0
+    let rc = unsafe { CRYPTO_memcmp(a.as_ffi_void_ptr(), b.as_ffi_void_ptr(), a.len()) };
 
     if rc == 0 {
         return Ok(());
@@ -519,6 +531,7 @@ pub fn verify_slices_are_equal(a: &[u8], b: &[u8]) -> Result<()> {
     Err(Error::CryptoFail)
 }
 
+#[cfg(not(feature = "android"))]
 extern "C" {
     fn EVP_sha256() -> *const EVP_MD;
 
@@ -667,10 +680,15 @@ mod tests {
     }
 }
 
-#[cfg(not(feature = "openssl"))]
+#[cfg(all(not(feature = "openssl"), not(feature = "android")))]
 mod boringssl;
-#[cfg(not(feature = "openssl"))]
+#[cfg(all(not(feature = "openssl"), not(feature = "android")))]
 pub(crate) use boringssl::*;
+
+#[cfg(feature = "android")]
+mod android_boringssl;
+#[cfg(feature = "android")]
+pub(crate) use android_boringssl::*;
 
 #[cfg(feature = "openssl")]
 mod openssl_quictls;
