@@ -25,7 +25,9 @@ rust_library {
     cargo_pkg_version: "0.24.9",
     crate_root: "src/lib.rs",
     edition: "2021",
+    features: ["android"],
     rlibs: [
+        "libbssl_sys",
         "libeither",
         "libintrusive_collections",
         "liblibc",
@@ -60,7 +62,9 @@ rust_ffi {
     cargo_pkg_version: "0.24.9",
     crate_root: "src/lib.rs",
     edition: "2021",
+    features: ["android"],
     rlibs: [
+        "libbssl_sys",
         "libeither",
         "libintrusive_collections",
         "liblibc",
@@ -95,7 +99,9 @@ rust_library_rlib {
     cargo_pkg_version: "0.24.9",
     crate_root: "src/lib.rs",
     edition: "2021",
+    features: ["android"],
     rustlibs: [
+        "libbssl_sys",
         "libeither",
         "libintrusive_collections",
         "liblibc",
@@ -131,10 +137,12 @@ rust_test {
     auto_gen_config: true,
     edition: "2021",
     features: [
+        "android",
         "boringssl-vendored",
         "default",
     ],
     rustlibs: [
+        "libbssl_sys",
         "libeither",
         "libintrusive_collections",
         "liblibc",
@@ -175,10 +183,12 @@ rust_test_host {
     },
     edition: "2021",
     features: [
+        "android",
         "boringssl-vendored",
         "default",
     ],
     rustlibs: [
+        "libbssl_sys",
         "libeither",
         "libintrusive_collections",
         "liblibc",
