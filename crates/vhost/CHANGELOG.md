@@ -7,6 +7,12 @@
 ### Deprecated
 ### Fixed
 
+## v0.18.1
+
+### Fixed
+- [[#380]](https://github.com/rust-vmm/vhost/pull/380) Read the `SET_LOG_BASE` reply by the size in
+  its header, so the frontend no longer blocks on back-ends (e.g. libvhost-user) that send a shorter reply.
+
 ## v0.18.0
 
 ### Added
