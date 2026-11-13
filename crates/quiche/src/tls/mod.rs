@@ -34,8 +34,6 @@ use std::sync::LazyLock;
 
 use libc::c_char;
 use libc::c_int;
-#[cfg(feature = "android")]
-use libc::c_long;
 use libc::c_uint;
 use libc::c_void;
 
@@ -52,97 +50,68 @@ const TLS1_3_VERSION: u16 = 0x0304;
 const TLS_ALERT_ERROR: u64 = 0x100;
 const INTERNAL_ERROR: u64 = 0x01;
 
-#[cfg(not(feature = "android"))]
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 struct SSL_METHOD {
     _unused: c_void,
 }
-#[cfg(feature = "android")]
-use bssl_sys::SSL_METHOD;
 
-#[cfg(not(feature = "android"))]
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 struct SSL_CTX {
     _unused: c_void,
 }
-#[cfg(feature = "android")]
-use bssl_sys::SSL_CTX;
 
-#[cfg(not(feature = "android"))]
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 struct SSL {
     _unused: c_void,
 }
-#[cfg(feature = "android")]
-use bssl_sys::SSL;
 
-#[cfg(not(feature = "android"))]
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 struct SSL_CIPHER {
     _unused: c_void,
 }
-#[cfg(feature = "android")]
-use bssl_sys::SSL_CIPHER;
 
-#[cfg(not(feature = "android"))]
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 struct SSL_SESSION {
     _unused: c_void,
 }
-#[cfg(feature = "android")]
-use bssl_sys::SSL_SESSION;
 
-#[cfg(not(feature = "android"))]
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 struct X509_VERIFY_PARAM {
     _unused: c_void,
 }
-#[cfg(feature = "android")]
-use bssl_sys::X509_VERIFY_PARAM;
 
-#[cfg(not(feature = "android"))]
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 #[cfg(windows)]
 struct X509_STORE {
     _unused: c_void,
 }
-#[cfg(all(feature = "android", windows))]
-use bssl_sys::X509_STORE;
 
-#[cfg(not(feature = "android"))]
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 struct X509_STORE_CTX {
     _unused: c_void,
 }
-#[cfg(feature = "android")]
-use bssl_sys::X509_STORE_CTX;
 
-#[cfg(not(feature = "android"))]
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 #[cfg(windows)]
 struct X509 {
     _unused: c_void,
 }
-#[cfg(all(feature = "android", windows))]
-use bssl_sys::X509;
 
-#[cfg(not(feature = "android"))]
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 struct STACK_OF {
     _unused: c_void,
 }
 
-#[cfg(not(feature = "android"))]
 #[cfg(test)]
 #[repr(C)]
 #[allow(non_camel_case_types)]
@@ -153,19 +122,9 @@ enum ssl_private_key_result_t {
     ssl_private_key_failure,
 }
 
-#[cfg(feature = "android")]
-use bssl_sys::ssl_private_key_result_t;
-
 /// BoringSSL ex_data index for quiche connections.
 pub static QUICHE_EX_DATA_INDEX: LazyLock<c_int> = LazyLock::new(|| unsafe {
-    #[cfg(not(feature = "android"))]
-    {
-        SSL_get_ex_new_index(0, ptr::null(), ptr::null(), ptr::null(), ptr::null())
-    }
-    #[cfg(feature = "android")]
-    {
-        bssl_sys::SSL_get_ex_new_index(0, ptr::null_mut(), ptr::null_mut(), None, None)
-    }
+    SSL_get_ex_new_index(0, ptr::null(), ptr::null(), ptr::null(), ptr::null())
 });
 
 pub struct Context(*mut SSL_CTX);
@@ -279,45 +238,22 @@ impl Context {
             );
 
             while !ctx_p.is_null() {
-                #[cfg(not(feature = "android"))]
-                {
-                    let in_p = (*ctx_p).pbCertEncoded as *const u8;
+                let in_p = (*ctx_p).pbCertEncoded as *const u8;
 
-                    let cert = d2i_X509(ptr::null_mut(), &in_p, (*ctx_p).cbCertEncoded as i32);
-                    if !cert.is_null() {
-                        X509_STORE_add_cert(ctx_store, cert);
-                    }
-
-                    X509_free(cert);
-
-                    ctx_p = windows_sys::Win32::Security::Cryptography::CertEnumCertificatesInStore(
-                        sys_store, ctx_p,
-                    );
+                let cert = d2i_X509(
+                    ptr::null_mut(),
+                    &in_p,
+                    (*ctx_p).cbCertEncoded as i32,
+                );
+                if !cert.is_null() {
+                    X509_STORE_add_cert(ctx_store, cert);
                 }
-                #[cfg(feature = "android")]
-                {
-                    let mut in_p = (*ctx_p).pbCertEncoded as *const u8;
 
-                    #[cfg(not(target_os = "windows"))]
-                    let in_pp = &in_p;
-                    #[cfg(target_os = "windows")]
-                    let mut in_pp = &mut in_p as *mut *const u8;
+                X509_free(cert);
 
-                    let cert = bssl_sys::d2i_X509(
-                        ptr::null_mut(),
-                        in_pp,
-                        (*ctx_p).cbCertEncoded as c_long,
-                    );
-                    if !cert.is_null() {
-                        bssl_sys::X509_STORE_add_cert(ctx_store, cert);
-                    }
-
-                    bssl_sys::X509_free(cert);
-
-                    ctx_p = windows_sys::Win32::Security::Cryptography::CertEnumCertificatesInStore(
-                        sys_store, ctx_p,
-                    );
-                }
+                ctx_p = windows_sys::Win32::Security::Cryptography::CertEnumCertificatesInStore(
+                    sys_store, ctx_p,
+                );
             }
 
             // tidy up
@@ -392,7 +328,7 @@ impl Context {
         map_result(unsafe {
             SSL_CTX_set_tlsext_ticket_keys(
                 self.as_mut_ptr(),
-                key.as_ptr().cast(),
+                key.as_ptr(),
                 key.len(),
             )
         })
@@ -591,8 +527,6 @@ impl Handshake {
         &mut self, level: crypto::Level, buf: &[u8],
     ) -> Result<()> {
         self.provided_data_outstanding = true;
-        #[cfg(feature = "android")]
-        let level = to_bssl_level(level);
         let rc = unsafe {
             SSL_provide_quic_data(
                 self.as_mut_ptr(),
@@ -630,11 +564,7 @@ impl Handshake {
     }
 
     pub fn write_level(&self) -> crypto::Level {
-        #[cfg(not(feature = "android"))]
         unsafe { SSL_quic_write_level(self.as_ptr()) }
-        #[cfg(feature = "android")]
-        from_bssl_level(unsafe { SSL_quic_write_level(self.as_ptr()) })
-            .expect("BoringSSL returned an unknown QUIC encryption level")
     }
 
     pub fn cipher(&self) -> Option<crypto::Algorithm> {
@@ -755,6 +685,7 @@ impl Handshake {
 // the pointer is not accessed directly outside of this module, and the
 // Handshake object API should preserve Rust's borrowing guarantees.
 unsafe impl Send for Handshake {}
+unsafe impl Sync for Handshake {}
 
 impl Drop for Handshake {
     fn drop(&mut self) {
@@ -824,42 +755,6 @@ fn get_cipher_from_ptr(cipher: *const SSL_CIPHER) -> Result<crypto::Algorithm> {
     Ok(alg)
 }
 
-#[cfg(feature = "android")]
-fn from_bssl_level(level: bssl_sys::ssl_encryption_level_t) -> Option<crypto::Level> {
-    match level {
-        bssl_sys::ssl_encryption_level_t_ssl_encryption_initial => Some(crypto::Level::Initial),
-        bssl_sys::ssl_encryption_level_t_ssl_encryption_early_data => Some(crypto::Level::ZeroRTT),
-        bssl_sys::ssl_encryption_level_t_ssl_encryption_handshake => Some(crypto::Level::Handshake),
-        bssl_sys::ssl_encryption_level_t_ssl_encryption_application => Some(crypto::Level::OneRTT),
-        _ => None,
-    }
-}
-
-#[cfg(feature = "android")]
-fn to_bssl_level(level: crypto::Level) -> bssl_sys::ssl_encryption_level_t {
-    match level {
-        crypto::Level::Initial => bssl_sys::ssl_encryption_level_t_ssl_encryption_initial,
-        crypto::Level::ZeroRTT => bssl_sys::ssl_encryption_level_t_ssl_encryption_early_data,
-        crypto::Level::Handshake => bssl_sys::ssl_encryption_level_t_ssl_encryption_handshake,
-        crypto::Level::OneRTT => bssl_sys::ssl_encryption_level_t_ssl_encryption_application,
-    }
-}
-
-#[cfg(feature = "android")]
-unsafe extern "C" fn g3_set_read_secret(
-    ssl: *mut SSL,
-    level: bssl_sys::ssl_encryption_level_t,
-    cipher: *const SSL_CIPHER,
-    secret: *const u8,
-    secret_len: usize,
-) -> c_int {
-    let level = match from_bssl_level(level) {
-        Some(v) => v,
-        None => return 0,
-    };
-    set_read_secret(ssl, level, cipher, secret, secret_len)
-}
-
 extern "C" fn set_read_secret(
     ssl: *mut SSL, level: crypto::Level, cipher: *const SSL_CIPHER,
     secret: *const u8, secret_len: usize,
@@ -909,21 +804,6 @@ extern "C" fn set_read_secret(
     1
 }
 
-#[cfg(feature = "android")]
-unsafe extern "C" fn g3_set_write_secret(
-    ssl: *mut SSL,
-    level: bssl_sys::ssl_encryption_level_t,
-    cipher: *const SSL_CIPHER,
-    secret: *const u8,
-    secret_len: usize,
-) -> c_int {
-    let level = match from_bssl_level(level) {
-        Some(v) => v,
-        None => return 0,
-    };
-    set_write_secret(ssl, level, cipher, secret, secret_len)
-}
-
 extern "C" fn set_write_secret(
     ssl: *mut SSL, level: crypto::Level, cipher: *const SSL_CIPHER,
     secret: *const u8, secret_len: usize,
@@ -968,20 +848,6 @@ extern "C" fn set_write_secret(
     1
 }
 
-#[cfg(feature = "android")]
-unsafe extern "C" fn g3_add_handshake_data(
-    ssl: *mut SSL,
-    level: bssl_sys::ssl_encryption_level_t,
-    data: *const u8,
-    len: usize,
-) -> c_int {
-    let level = match from_bssl_level(level) {
-        Some(v) => v,
-        None => return 0,
-    };
-    add_handshake_data(ssl, level, data, len)
-}
-
 extern "C" fn add_handshake_data(
     ssl: *mut SSL, level: crypto::Level, data: *const u8, len: usize,
 ) -> c_int {
@@ -1016,29 +882,11 @@ extern "C" fn add_handshake_data(
     1
 }
 
-#[cfg(feature = "android")]
-unsafe extern "C" fn g3_flush_flight(ssl: *mut SSL) -> c_int {
-    flush_flight(ssl)
-}
-
 extern "C" fn flush_flight(_ssl: *mut SSL) -> c_int {
     // We don't really need to anything here since the output packets are
     // generated separately, when conn.send() is called.
 
     1
-}
-
-#[cfg(feature = "android")]
-unsafe extern "C" fn g3_send_alert(
-    ssl: *mut SSL,
-    level: bssl_sys::ssl_encryption_level_t,
-    alert: u8,
-) -> c_int {
-    let level = match from_bssl_level(level) {
-        Some(v) => v,
-        None => return 0,
-    };
-    send_alert(ssl, level, alert)
 }
 
 extern "C" fn send_alert(
@@ -1087,7 +935,7 @@ extern "C" fn keylog(ssl: *const SSL, line: *const c_char) {
 }
 
 extern "C" fn select_alpn(
-    ssl: *mut SSL, out: *mut *const u8, out_len: *mut u8, inp: *const u8,
+    ssl: *mut SSL, out: *mut *const u8, out_len: *mut u8, inp: *mut u8,
     in_len: c_uint, _arg: *mut c_void,
 ) -> c_int {
     // SSL_TLSEXT_ERR_OK 0
@@ -1235,35 +1083,6 @@ fn log_ssl_error() {
     );
 }
 
-#[cfg(feature = "android")]
-use bssl_sys::{
-    ERR_error_string_n, ERR_peek_error, SSL_CIPHER_get_id,
-    SSL_CTX_load_verify_locations, SSL_CTX_sess_set_new_cb,
-    SSL_CTX_set_alpn_protos, SSL_CTX_set_alpn_select_cb,
-    SSL_CTX_set_keylog_callback, SSL_CTX_set_session_cache_mode,
-    SSL_CTX_set_tlsext_ticket_keys, SSL_CTX_set_verify,
-    SSL_CTX_use_PrivateKey_file, SSL_CTX_use_certificate_chain_file, SSL_clear,
-    SSL_do_handshake, SSL_free, SSL_get0_alpn_selected, SSL_get0_param,
-    SSL_get_current_cipher, SSL_get_error, SSL_get_ex_data,
-    SSL_get_peer_quic_transport_params, SSL_get_servername, SSL_in_init,
-    SSL_process_quic_post_handshake, SSL_provide_quic_data,
-    SSL_quic_write_level, SSL_session_reused, SSL_set_accept_state,
-    SSL_set_connect_state, SSL_set_ex_data, SSL_set_max_proto_version,
-    SSL_set_min_proto_version, SSL_set_quic_method,
-    SSL_set_quic_transport_params, SSL_set_quic_use_legacy_codepoint,
-    SSL_set_quiet_shutdown, SSL_set_tlsext_host_name,
-    X509_VERIFY_PARAM_set1_host,
-};
-#[cfg(feature = "android")]
-use bssl_sys::{SSL_CTX_free, SSL_CTX_new, SSL_new, TLS_method};
-#[cfg(all(feature = "android", not(windows)))]
-use bssl_sys::SSL_CTX_set_default_verify_paths;
-#[cfg(all(feature = "android", windows))]
-use bssl_sys::SSL_CTX_get_cert_store;
-#[cfg(all(feature = "android", test))]
-use bssl_sys::SSL_set_options;
-
-#[cfg(not(feature = "android"))]
 extern "C" {
     // Note: some vendor-specific methods are implemented by each vendor's
     // submodule (openssl-quictls / boringssl).
@@ -1319,7 +1138,7 @@ extern "C" {
                 ssl: *mut SSL,
                 out: *mut *const u8,
                 out_len: *mut u8,
-                inp: *const u8,
+                inp: *mut u8,
                 in_len: c_uint,
                 arg: *mut c_void,
             ) -> c_int,
@@ -1431,15 +1250,10 @@ extern "C" {
 
 }
 
-#[cfg(all(not(feature = "openssl"), not(feature = "android")))]
+#[cfg(not(feature = "openssl"))]
 mod boringssl;
-#[cfg(all(not(feature = "openssl"), not(feature = "android")))]
-pub(crate) use boringssl::*;
-
-#[cfg(feature = "android")]
-mod android_boringssl;
-#[cfg(feature = "android")]
-pub(crate) use android_boringssl::*;
+#[cfg(not(feature = "openssl"))]
+use boringssl::*;
 
 #[cfg(feature = "openssl")]
 mod openssl_quictls;
