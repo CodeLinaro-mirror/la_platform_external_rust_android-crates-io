@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.89.0"
 name = "rusqlite"
-version = "0.41.1"
+version = "0.42.0"
 authors = ["The rusqlite developers"]
 build = false
 exclude = [
@@ -90,6 +90,8 @@ bundled-full = [
 bundled-sqlcipher = [
     "libsqlite3-sys?/bundled-sqlcipher",
     "bundled",
+    "codec",
+    "sqlite-wasm-rs?/sqlcipher",
 ]
 bundled-sqlcipher-vendored-openssl = [
     "libsqlite3-sys?/bundled-sqlcipher-vendored-openssl",
@@ -97,6 +99,7 @@ bundled-sqlcipher-vendored-openssl = [
 ]
 bundled-windows = ["libsqlite3-sys?/bundled-windows"]
 cache = ["hashlink"]
+codec = []
 collation = []
 column_decltype = []
 column_metadata = ["libsqlite3-sys?/column_metadata"]
@@ -221,6 +224,10 @@ name = "deny_single_threaded_sqlite_config"
 path = "tests/deny_single_threaded_sqlite_config.rs"
 
 [[test]]
+name = "hook_no_mem"
+path = "tests/hook_no_mem.rs"
+
+[[test]]
 name = "vtab"
 path = "tests/vtab.rs"
 
@@ -326,11 +333,11 @@ optional = true
 default-features = false
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies.libsqlite3-sys]
-version = "0.39.0"
+version = "0.40.0"
 optional = true
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies.sqlite-wasm-rs]
-version = ">=0.5.1, <0.7.0"
+version = ">=0.6.3, <0.7.0"
 optional = true
 default-features = false
 
@@ -349,7 +356,7 @@ version = "0.4"
 features = ["wasm_js"]
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies.sqlite-wasm-rs]
-version = ">=0.5.1, <0.7.0"
+version = ">=0.6.3, <0.7.0"
 default-features = false
 
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies.uuid]
@@ -363,7 +370,7 @@ version = "0.2.104"
 version = "0.3.54"
 
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies.libsqlite3-sys]
-version = "0.39.0"
+version = "0.40.0"
 
 [lints.clippy]
 ref_option = "warn"
