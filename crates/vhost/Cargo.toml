@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "vhost"
-version = "0.18.0"
+version = "0.18.1"
 authors = ["Liu Jiang <gerry@linux.alibaba.com>"]
 build = "build.rs"
 autolib = false
