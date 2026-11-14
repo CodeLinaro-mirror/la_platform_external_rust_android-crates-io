@@ -1,17 +1,17 @@
 name: "moxcms"
 description: "Simple Color Management in Rust"
 third_party {
-  version: "0.9.1"
+  version: "0.9.2"
   license_type: NOTICE
   last_upgrade_date {
     year: 2026
-    month: 9
-    day: 16
+    month: 11
+    day: 10
   }
   homepage: "https://crates.io/crates/moxcms"
   identifier {
     type: "crates.io"
     value: "moxcms"
-    version: "0.9.1"
+    version: "0.9.2"
   }
 }

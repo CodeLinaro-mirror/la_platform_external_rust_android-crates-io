@@ -26,6 +26,7 @@
  * // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+use crate::helpers::boxed_array;
 use crate::mlaf::{fmla, mlaf};
 use crate::transform::PointeeSizeExpressible;
 use crate::*;
@@ -651,7 +652,7 @@ fn make_gamma_table_impl(
     let max_range = 1f64 / (output.len() - 1) as f64;
     if round {
         for (v, o) in output.iter_mut().enumerate() {
-            *o = (gamma(v as f64 * max_range) * max_value) as f32;
+            *o = ((gamma(v as f64 * max_range) * max_value) as f32).round();
         }
     } else {
         for (v, o) in output.iter_mut().enumerate() {
@@ -962,7 +963,7 @@ impl TransferCharacteristics {
         };
         assert!(cap_values <= N, "Invalid lut table construction");
 
-        let mut gamma_table = Box::new([0f32; N]);
+        let mut gamma_table = boxed_array::<f32, N>(0.);
         make_linear_table_impl(gamma_table.as_mut_slice(), cap_values, max_value, |x| {
             self.linearize(x)
         });
@@ -984,7 +985,7 @@ impl TransferCharacteristics {
         let max_value = ((1 << bit_depth) - 1) as f64;
         make_gamma_table_impl(&mut scratch, max_value, T::FINITE, |x| self.gamma(x));
 
-        let mut table = Box::new([T::default(); BUCKET]);
+        let mut table = boxed_array::<T, BUCKET>(T::default());
         for (src, dst) in scratch.iter().zip(table.iter_mut()) {
             *dst = src.as_();
         }
@@ -995,6 +996,21 @@ impl TransferCharacteristics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn integer_gamma_table_rounds_to_nearest() {
+        const N: usize = 4096;
+        for tc in [
+            TransferCharacteristics::Srgb,
+            TransferCharacteristics::Bt709,
+        ] {
+            let table = tc.make_gamma_table::<u8, 65536, N>(8);
+            for (v, &entry) in table.iter().take(N).enumerate() {
+                let expected = ((tc.gamma(v as f64 / (N - 1) as f64) * 255.0) as f32).round();
+                assert_eq!(entry, expected as u8, "{tc:?} entry {v}");
+            }
+        }
+    }
 
     #[test]
     fn srgb_test() {
