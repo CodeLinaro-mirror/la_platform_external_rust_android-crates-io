@@ -29,7 +29,7 @@
 #![cfg(feature = "lut")]
 use crate::conversions::LutBarycentricReduction;
 use crate::conversions::interpolator::*;
-use crate::conversions::lut_transforms::Lut4x3Factory;
+use crate::conversions::lut_transforms::{Grid4x3, Lut4x3Factory};
 use crate::math::{FusedMultiplyAdd, FusedMultiplyNegAdd, m_clamp};
 use crate::{
     BarycentricWeightScale, CmsError, DataColorSpace, InterpolationMethod, Layout,
@@ -311,7 +311,7 @@ where
         &self,
         src: &[T],
         dst: &mut [T],
-        interpolator: Box<dyn MultidimensionalInterpolation + Send + Sync>,
+        interpolator: impl MultidimensionalInterpolation,
     ) {
         let cn = Layout::from(LAYOUT);
         let channels = cn.channels();
@@ -408,17 +408,9 @@ where
             || self.color_space == DataColorSpace::Xyz
         {
             if T::FINITE {
-                self.transform_chunk::<DefaultVector3fLerp>(
-                    src,
-                    dst,
-                    Box::new(Trilinear::<GRID_SIZE> {}),
-                );
+                self.transform_chunk::<DefaultVector3fLerp>(src, dst, Trilinear::<GRID_SIZE> {});
             } else {
-                self.transform_chunk::<NonFiniteVector3fLerp>(
-                    src,
-                    dst,
-                    Box::new(Trilinear::<GRID_SIZE> {}),
-                );
+                self.transform_chunk::<NonFiniteVector3fLerp>(src, dst, Trilinear::<GRID_SIZE> {});
             }
         } else {
             match self.interpolation_method {
@@ -428,13 +420,13 @@ where
                         self.transform_chunk::<DefaultVector3fLerp>(
                             src,
                             dst,
-                            Box::new(Tetrahedral::<GRID_SIZE> {}),
+                            Tetrahedral::<GRID_SIZE> {},
                         );
                     } else {
                         self.transform_chunk::<NonFiniteVector3fLerp>(
                             src,
                             dst,
-                            Box::new(Tetrahedral::<GRID_SIZE> {}),
+                            Tetrahedral::<GRID_SIZE> {},
                         );
                     }
                 }
@@ -444,13 +436,13 @@ where
                         self.transform_chunk::<DefaultVector3fLerp>(
                             src,
                             dst,
-                            Box::new(Pyramidal::<GRID_SIZE> {}),
+                            Pyramidal::<GRID_SIZE> {},
                         );
                     } else {
                         self.transform_chunk::<NonFiniteVector3fLerp>(
                             src,
                             dst,
-                            Box::new(Pyramidal::<GRID_SIZE> {}),
+                            Pyramidal::<GRID_SIZE> {},
                         );
                     }
                 }
@@ -460,13 +452,13 @@ where
                         self.transform_chunk::<DefaultVector3fLerp>(
                             src,
                             dst,
-                            Box::new(Prismatic::<GRID_SIZE> {}),
+                            Prismatic::<GRID_SIZE> {},
                         );
                     } else {
                         self.transform_chunk::<NonFiniteVector3fLerp>(
                             src,
                             dst,
-                            Box::new(Prismatic::<GRID_SIZE> {}),
+                            Prismatic::<GRID_SIZE> {},
                         );
                     }
                 }
@@ -475,13 +467,13 @@ where
                         self.transform_chunk::<DefaultVector3fLerp>(
                             src,
                             dst,
-                            Box::new(Trilinear::<GRID_SIZE> {}),
+                            Trilinear::<GRID_SIZE> {},
                         );
                     } else {
                         self.transform_chunk::<NonFiniteVector3fLerp>(
                             src,
                             dst,
-                            Box::new(Trilinear::<GRID_SIZE> {}),
+                            Trilinear::<GRID_SIZE> {},
                         );
                     }
                 }
@@ -502,19 +494,21 @@ impl Lut4x3Factory for DefaultLut4x3Factory {
         const LAYOUT: u8,
         const GRID_SIZE: usize,
         const BIT_DEPTH: usize,
+        const BINS: usize,
     >(
-        lut: Vec<f32>,
+        lut: Grid4x3<'_>,
         options: TransformOptions,
         color_space: DataColorSpace,
         is_linear: bool,
-    ) -> Arc<dyn TransformExecutor<T> + Sync + Send>
+    ) -> Result<Arc<dyn TransformExecutor<T> + Sync + Send>, CmsError>
     where
         f32: AsPrimitive<T>,
         u32: AsPrimitive<T>,
         (): LutBarycentricReduction<T, u8>,
         (): LutBarycentricReduction<T, u16>,
     {
-        let use_fixed_point = options.prefer_fixed_point
+        let use_fixed_point = T::FINITE
+            && options.prefer_fixed_point
             && BIT_DEPTH < 16
             && (color_space == DataColorSpace::Lab
                 || (is_linear && color_space == DataColorSpace::Rgb)
@@ -522,25 +516,16 @@ impl Lut4x3Factory for DefaultLut4x3Factory {
                 || options.interpolation_method == InterpolationMethod::Linear);
 
         if use_fixed_point {
-            let q = if T::FINITE {
-                ((1i32 << BIT_DEPTH) - 1) as f32
-            } else {
-                ((1i32 << 14) - 1) as f32
-            };
-            let lut: Vec<AlignedI16x4> = lut
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .map(|x| {
-                    AlignedI16x4([
-                        (x[0] * q).round() as i16,
-                        (x[1] * q).round() as i16,
-                        (x[2] * q).round() as i16,
-                        0,
-                    ])
-                })
-                .collect();
-            return match options.barycentric_weight_scale {
+            let q = ((1i32 << BIT_DEPTH) - 1) as f32;
+            let lut: Vec<AlignedI16x4> = lut.collect(|x| {
+                AlignedI16x4([
+                    (x[0] * q).round() as i16,
+                    (x[1] * q).round() as i16,
+                    (x[2] * q).round() as i16,
+                    0,
+                ])
+            })?;
+            return Ok(match options.barycentric_weight_scale {
                 BarycentricWeightScale::Low => {
                     Arc::new(
                         TransformLut4To3Q0_15::<T, u8, LAYOUT, GRID_SIZE, BIT_DEPTH, 256, 256> {
@@ -558,18 +543,19 @@ impl Lut4x3Factory for DefaultLut4x3Factory {
                     LAYOUT,
                     GRID_SIZE,
                     BIT_DEPTH,
-                    65536,
-                    65536,
+                    BINS,
+                    BINS,
                 > {
                     lut,
                     _phantom: PhantomData,
                     _phantom1: PhantomData,
-                    weights: BarycentricWeight::<i16>::create_binned::<GRID_SIZE, 65536>(),
+                    weights: BarycentricWeight::<i16>::create_binned::<GRID_SIZE, BINS>(),
                 }),
-            };
+            });
         }
 
-        match options.barycentric_weight_scale {
+        let lut = lut.into_f32()?;
+        Ok(match options.barycentric_weight_scale {
             BarycentricWeightScale::Low => {
                 Arc::new(
                     TransformLut4To3::<T, u8, LAYOUT, GRID_SIZE, BIT_DEPTH, 256, 256> {
@@ -586,18 +572,18 @@ impl Lut4x3Factory for DefaultLut4x3Factory {
             #[cfg(feature = "options")]
             BarycentricWeightScale::High => {
                 Arc::new(
-                    TransformLut4To3::<T, u16, LAYOUT, GRID_SIZE, BIT_DEPTH, 65536, 65536> {
+                    TransformLut4To3::<T, u16, LAYOUT, GRID_SIZE, BIT_DEPTH, BINS, BINS> {
                         lut,
                         _phantom: PhantomData,
                         _phantom1: PhantomData,
                         interpolation_method: options.interpolation_method,
-                        weights: BarycentricWeight::<f32>::create_binned::<GRID_SIZE, 65536>(),
+                        weights: BarycentricWeight::<f32>::create_binned::<GRID_SIZE, BINS>(),
                         color_space,
                         is_linear,
                     },
                 )
             }
-        }
+        })
     }
 }
 
