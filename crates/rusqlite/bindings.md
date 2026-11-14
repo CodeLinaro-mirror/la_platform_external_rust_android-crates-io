@@ -153,7 +153,7 @@
 - [X] `sqlite3_value_text`
 - [X] `sqlite3_value_bytes` (not public, internal use only)
 - [X] `sqlite3_value_type`
-- [ ] `sqlite3_value_numeric_type`
+- [X] `sqlite3_value_numeric_type`
 - [X] `sqlite3_value_nochange`
 - [ ] `sqlite3_value_frombind`
 - [ ] `sqlite3_value_encoding`
@@ -218,7 +218,7 @@
 
 - [X] `sqlite3_load_extension`
 - [X] `sqlite3_enable_load_extension` (cannot be used by a loadable extension)
-- [X] `sqlite3_auto_extension` (`fn` callbak with Connection ref)
+- [X] `sqlite3_auto_extension` (`fn` callback with Connection ref)
 - [X] `sqlite3_cancel_auto_extension`
 - [X] `sqlite3_reset_auto_extension`
 
